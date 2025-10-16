@@ -1,0 +1,241 @@
+# =============================================================================
+# TRAFFIC MONITORING SYSTEM - .gitignore
+# =============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+PYTHON
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+.env
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# =============================================================================
+# TRAFFIC MONITORING SPECIFIC FILES
+# =============================================================================
+
+# Uploaded Files
+uploads/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+*.m4v
+
+# Processed Output Files
+processed/
+output/
+results/
+
+# Violation Images
+violations/
+wrong_side/
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.tiff
+*.gif
+
+# Model Files (if not using git-lfs)
+*.pt
+*.pth
+*.onnx
+*.pb
+*.h5
+*.weights
+models/
+checkpoints/
+
+# Temporary Files
+temp/
+tmp/
+*.tmp
+*.temp
+*_web.mp4
+*_temp.mp4
+
+# =============================================================================
+# LOGS & DEBUGGING
+# =============================================================================
+
+# Log Files
+*.log
+logs/
+*.out
+*.err
+
+# Debug Files
+.debug/
+debug/
+*.debug
+
+# =============================================================================
+# SYSTEM & CACHE FILES
+# =============================================================================
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Cache
+.cache/
+*.cache
+__pycache__/
+.pytest_cache/
+.coverage
+.nyc_output
+
+# =============================================================================
+# CONFIGURATION & SECRETS
+# =============================================================================
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Configuration Files (if containing secrets)
+config.json
+secrets.json
+*.key
+*.pem
+*.crt
+*.csr
+
+# API Keys
+api_keys.txt
+keys/
+
+# =============================================================================
+# DOCKER & DEPLOYMENT
+# =============================================================================
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Deployment
+deploy/
+.deploy/
+
+# =============================================================================
+# TESTING & COVERAGE
+# =============================================================================
+
+# Testing
+.tox/
+.nox/
+.coverage
+.pytest_cache/
+cover/
+*.cover
+*.py,cover
+.hypothesis/
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+
+# Documentation builds
+docs/_build/
+.readthedocs.yml
+
+# =============================================================================
+# BACKUP & WORKING FILES
+# =============================================================================
+
+# Backup Files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Working Files
+working_*
+test_*
+example_*
+sample_*
+demo_video.*
+test_video.*
+
+# =============================================================================
+# PERFORMANCE & PROFILING
+# =============================================================================
+
+# Profiling
+.prof
+*.prof
+profile_*
+
+# Performance Monitoring
+*.perf
+perf.data*
+
+# =============================================================================
+# KEEP THESE FILES (NEGATION PATTERNS)
+# =============================================================================
+
+# Keep essential model files if needed (uncomment if using git-lfs)
+# !models/rtdetr-x.pt
+# !models/yolo11l.pt
+# !models/yolov10s.pt
+
+# Keep sample configuration
+!config.example.json
+!.env.example
+
+# Keep README and documentation
+!README.md
+!docs/
+!*.md
