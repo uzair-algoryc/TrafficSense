@@ -341,3 +341,197 @@ class WrongWayDetector:
         """Reset detector state."""
         self.vehicle_history.clear()
         self.wrong_way_vehicles.clear()
+
+
+class HybridVehicleCounter:
+    """
+    Hybrid vehicle counter combining trajectory analysis with line crossing detection.
+    Uses trajectory direction validation for accurate counting on curved roads.
+    """
+    
+    def __init__(self, start_point: tuple, end_point: tuple, mode: str = "both"):
+        """
+        Initialize hybrid counter.
+        
+        Args:
+            start_point: Line start coordinates (x, y)
+            end_point: Line end coordinates (x, y)
+            mode: "both" (2-way), "in" (only IN), "out" (only OUT)
+        """
+        self.start = np.array(start_point, dtype=np.float64)
+        self.end = np.array(end_point, dtype=np.float64)
+        
+        # Line equation: Ax + By + C = 0
+        self.line_vec = self.end - self.start
+        self.A = self.line_vec[1]  # dy
+        self.B = -self.line_vec[0]  # -dx
+        self.C = self.line_vec[0] * self.start[1] - self.line_vec[1] * self.start[0]
+        
+        # Trajectory parameters
+        self.trajectory_buffer_size = 15  # 0.5 seconds at 30 FPS
+        self.min_points_for_counting = 5  # Minimum trajectory length
+        self.movement_threshold = 3.0  # Minimum movement magnitude
+        
+        # Vehicle tracking data
+        self.vehicle_trajectories = {}  # track_id -> list of (x, y) points
+        self.vehicle_last_side = {}  # track_id -> side of line (1 or -1)
+        self.counted_vehicles = set()  # PERMANENT - never count twice
+        
+        # Counters
+        self.in_count = 0
+        self.out_count = 0
+        self.mode = mode.lower()
+    
+    def _get_line_side(self, point):
+        """Get which side of line the point is on using line equation"""
+        x, y = point
+        value = self.A * x + self.B * y + self.C
+        return 1 if value > 0 else -1
+    
+    def _line_crossed(self, prev_point, curr_point):
+        """Check if vehicle crossed the line between two points"""
+        prev_side = self._get_line_side(prev_point)
+        curr_side = self._get_line_side(curr_point)
+        return prev_side != curr_side, prev_side, curr_side
+    
+    def _calculate_movement_direction(self, trajectory):
+        """Calculate average movement direction from trajectory"""
+        if len(trajectory) < 2:
+            return None
+        
+        # Calculate movement vectors between consecutive points
+        movements = []
+        for i in range(1, len(trajectory)):
+            dx = trajectory[i][0] - trajectory[i-1][0]
+            dy = trajectory[i][1] - trajectory[i-1][1]
+            movements.append((dx, dy))
+        
+        # Calculate average movement
+        avg_dx = sum(mov[0] for mov in movements) / len(movements)
+        avg_dy = sum(mov[1] for mov in movements) / len(movements)
+        
+        return avg_dx, avg_dy
+    
+    def _project_movement_on_line(self, avg_dx, avg_dy):
+        """
+        Project movement vector onto line perpendicular direction.
+        Returns positive value for one direction, negative for opposite.
+        """
+        # Normalize line vector
+        line_length = np.linalg.norm(self.line_vec)
+        line_unit = self.line_vec / line_length
+        
+        # Perpendicular to line (normal vector)
+        perpendicular = np.array([-line_unit[1], line_unit[0]], dtype=np.float64)
+        
+        # Movement vector
+        movement = np.array([avg_dx, avg_dy], dtype=np.float64)
+        
+        # Project movement onto perpendicular direction
+        projection = np.dot(movement, perpendicular)
+        
+        return projection
+    
+    def _determine_crossing_direction(self, prev_side, curr_side, trajectory):
+        """
+        Determine crossing direction using trajectory analysis.
+        
+        Returns: "in", "out", or None
+        """
+        if len(trajectory) < self.min_points_for_counting:
+            return None
+        
+        # Calculate average movement direction
+        movement = self._calculate_movement_direction(trajectory)
+        if movement is None:
+            return None
+        
+        avg_dx, avg_dy = movement
+        
+        # Check if movement is significant enough
+        movement_magnitude = np.sqrt(avg_dx**2 + avg_dy**2)
+        if movement_magnitude < self.movement_threshold:
+            return None
+        
+        # Project movement onto line perpendicular
+        projection = self._project_movement_on_line(avg_dx, avg_dy)
+        
+        # Determine direction based on side change and movement projection
+        # Side -1 to +1 with positive projection = "in"
+        # Side +1 to -1 with negative projection = "out"
+        
+        if prev_side == -1 and curr_side == 1:
+            # Crossing from -1 to +1
+            if projection > 0:
+                return "in"
+            else:
+                return "out"
+        elif prev_side == 1 and curr_side == -1:
+            # Crossing from +1 to -1
+            if projection < 0:
+                return "out"
+            else:
+                return "in"
+        
+        return None
+    
+    def update(self, tracker_id: int, x_center: float, y_center: float):
+        """Update vehicle trajectory and check for line crossing"""
+        if tracker_id is None:
+            return
+        
+        # Skip if already counted
+        if tracker_id in self.counted_vehicles:
+            return
+        
+        current_point = np.array([x_center, y_center], dtype=np.float64)
+        
+        # Initialize trajectory for new vehicle
+        if tracker_id not in self.vehicle_trajectories:
+            self.vehicle_trajectories[tracker_id] = [current_point]
+            self.vehicle_last_side[tracker_id] = self._get_line_side(current_point)
+            return
+        
+        # Add current point to trajectory
+        trajectory = self.vehicle_trajectories[tracker_id]
+        trajectory.append(current_point)
+        
+        # Maintain buffer size
+        if len(trajectory) > self.trajectory_buffer_size:
+            trajectory.pop(0)
+        
+        # Check for line crossing
+        if len(trajectory) >= 2:
+            prev_point = trajectory[-2]
+            curr_point = trajectory[-1]
+            
+            crossed, prev_side, curr_side = self._line_crossed(prev_point, curr_point)
+            
+            if crossed:
+                # Line crossed! Determine direction using trajectory
+                direction = self._determine_crossing_direction(prev_side, curr_side, trajectory)
+                
+                if direction == "in" and self.mode in ["both", "in"]:
+                    self.in_count += 1
+                    self.counted_vehicles.add(tracker_id)
+                elif direction == "out" and self.mode in ["both", "out"]:
+                    self.out_count += 1
+                    self.counted_vehicles.add(tracker_id)
+                
+                # Update last side
+                self.vehicle_last_side[tracker_id] = curr_side
+    
+    def get_counts(self):
+        """Get current counts"""
+        return {
+            'in_count': self.in_count,
+            'out_count': self.out_count
+        }
+    
+    def reset(self):
+        """Reset all counters and tracking data"""
+        self.vehicle_trajectories = {}
+        self.vehicle_last_side = {}
+        self.counted_vehicles = set()
+        self.in_count = 0
+        self.out_count = 0

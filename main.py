@@ -58,7 +58,7 @@ from typing import Tuple
 import utilities  # Import the module, not just the objects
 from utilities import (
     load_model, init_tracker, VehicleCounter, CLASS_ID, assign_tracker_ids,
-    WrongWayZone, WrongWayDetector
+    WrongWayZone, WrongWayDetector,HybridVehicleCounter
 )
 import tempfile
 import numpy as np
@@ -157,7 +157,7 @@ def count_vehicles(
     coordinates: str = Form(...)
 ):
     """
-    Count vehicles crossing a line in a video.
+    Count vehicles crossing a line in a video using hybrid trajectory analysis.
     """
     try:
         # Validate file type - must be video
@@ -182,7 +182,9 @@ def count_vehicles(
         with open(input_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
         
-        output_path = PROCESSED_DIR / f"processed_{file.filename}"
+        # Generate unique filename to prevent overwriting
+        unique_output_path = generate_unique_filename(str(PROCESSED_DIR), "counted", file.filename)
+        output_path = Path(unique_output_path)
         
         coords = [int(c.strip()) for c in coordinates.split(',')]
         if len(coords) != 4:
@@ -194,7 +196,7 @@ def count_vehicles(
         logger.info(f"Processing video: {file.filename}")
         logger.info(f"Line: {start_point} -> {end_point}")
         
-        results = process_vehicle_count_video(
+        results = process_hybrid_count_video(
             str(input_path), 
             str(output_path), 
             start_point, 
@@ -220,22 +222,21 @@ def count_vehicles(
         )
 
 
-def process_vehicle_count_video(
+def process_hybrid_count_video(
     input_path: str, 
     output_path: str, 
     start_point: Tuple[int, int], 
     end_point: Tuple[int, int]
 ):
     """
-    Process video with vehicle detection, tracking, and counting.
+    Process video with hybrid trajectory-based vehicle counting.
     """
     try:
         tracker = init_tracker()
-        counter = VehicleCounter(start_point, end_point)
+        counter = HybridVehicleCounter(start_point, end_point)
         
         video_info = sv.VideoInfo.from_video_path(input_path)
         frame_gen = sv.get_video_frames_generator(input_path)
-        box_annotator = sv.BoxAnnotator(thickness=2)
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         video_info_mp4v = sv.VideoInfo(
@@ -252,11 +253,11 @@ def process_vehicle_count_video(
                     
                     if model_results is None or len(model_results) == 0:
                         logger.warning("Model returned no results for frame, skipping...")
-                        cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
+                        cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
                         cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
                         cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
                         sink.write_frame(frame)
                         continue
                     
@@ -265,11 +266,11 @@ def process_vehicle_count_video(
                     
                     if detections is None or len(detections) == 0:
                         logger.debug("No detections found in frame")
-                        cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
+                        cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
                         cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
                         cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
                         sink.write_frame(frame)
                         continue
                     
@@ -278,14 +279,15 @@ def process_vehicle_count_video(
                     
                 except Exception as e:
                     logger.error(f"Error processing frame: {str(e)}")
-                    cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
+                    cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
                     cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
                     cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
                     sink.write_frame(frame)
                     continue
                 
+                # Update trajectory counter
                 for i in range(len(detections.xyxy)):
                     if (hasattr(detections, 'tracker_id') and 
                         detections.tracker_id is not None and 
@@ -295,7 +297,18 @@ def process_vehicle_count_video(
                         y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
                         counter.update(detections.tracker_id[i], x_center, y_center)
                 
-                # Custom bounding box drawing with vehicle classes
+                # Draw trajectory trails for active vehicles (magenta trails)
+                # for track_id, trajectory in counter.vehicle_trajectories.items():
+                #     if len(trajectory) > 1:
+                #         # Draw trajectory trail with gradient (newer points brighter)
+                #         for j in range(1, len(trajectory)):
+                #             pt1 = tuple(map(int, trajectory[j-1]))
+                #             pt2 = tuple(map(int, trajectory[j]))
+                #             # Color intensity based on recency (newer = brighter)
+                #             intensity = int(255 * (j / len(trajectory)))
+                #             cv2.line(frame, pt1, pt2, (intensity, 0, 255), 2)  # Magenta trail
+                
+                # Custom bounding box drawing with vehicle classes (color-coded)
                 for i in range(len(detections.xyxy)):
                     if (hasattr(detections, 'tracker_id') and 
                         detections.tracker_id is not None and 
@@ -317,14 +330,14 @@ def process_vehicle_count_video(
                             vehicle_class = "Vehicle"
                             class_id = None
                         
-                        # Set colors based on vehicle class
-                        if class_id == 0:  # Car
+                        # Set colors based on vehicle class (same as trajectory API)
+                        if class_id == 2:  # Car (COCO class 2)
                             box_color = (255, 0, 0)  # Blue
-                        elif class_id == 1:  # Motorcycle  
+                        elif class_id == 3:  # Motorcycle (COCO class 3)
                             box_color = (0, 255, 0)  # Green
-                        elif class_id == 2:  # Bus
+                        elif class_id == 5:  # Bus (COCO class 5)
                             box_color = (0, 165, 255)  # Orange
-                        elif class_id == 3:  # Truck
+                        elif class_id == 7:  # Truck (COCO class 7)
                             box_color = (255, 0, 255)  # Magenta
                         else:
                             box_color = (128, 128, 128)  # Gray
@@ -333,14 +346,18 @@ def process_vehicle_count_video(
                         cv2.putText(frame, vehicle_class, (x1, y1 - 10),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
                 
-                cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
+                # Draw counting line (yellow, thicker)
+                cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
+                
+                # Display counts
                 cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
                 cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                
                 sink.write_frame(frame)
         
-        # Re-encode video with ffmpeg
+        # Re-encode video with ffmpeg for Chrome compatibility (H.264 + AAC)
         logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
@@ -368,7 +385,6 @@ def process_vehicle_count_video(
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
         raise Exception(str(e))
-
 
 @app.post("/wrong_way_detection")
 def detect_wrong_way(
