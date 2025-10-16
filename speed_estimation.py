@@ -98,8 +98,8 @@ class SpeedDetectionProcessor:
         return np.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
 
     @staticmethod
-    def draw_corner_rect(img, bbox, line_length=15, line_thickness=3,
-                        rect_thickness=1, rect_color=(255, 0, 255),
+    def draw_corner_rect(img, bbox, line_length=15, line_thickness=4,
+                        rect_thickness=3, rect_color=(255, 255, 255),
                         line_color=(0, 255, 0)):
         """Draw stylized bounding box with corner lines"""
         x, y, w, h = bbox

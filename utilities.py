@@ -222,6 +222,14 @@ class VehicleCounter:
         self.out_count = 0
 
 
+"""
+UPDATED WrongWayDetector Class in utilities.py
+Replace the entire WrongWayDetector class with this version.
+Keeps trajectory buffer for smooth direction tracking, removes angle tolerance.
+"""
+
+import math
+
 @dataclass
 class WrongWayZone:
     """Represents a traffic zone with allowed direction."""
@@ -231,9 +239,11 @@ class WrongWayZone:
     bottom_right: tuple
     allowed_direction: str  # "up", "down"
 
-
 class WrongWayDetector:
-    """Detects vehicles moving in wrong direction within a zone."""
+    """
+    Enhanced detector with trajectory-based direction tracking.
+    Uses buffer to smooth detections and reduce false positives.
+    """
     
     def __init__(self, zone: WrongWayZone):
         """
@@ -250,34 +260,52 @@ class WrongWayDetector:
             zone.bottom_left
         ], dtype=np.int32)
         
-        self.vehicle_history = {}
-        self.wrong_way_vehicles = set()
+        # Enhanced vehicle tracking with trajectory buffer
+        self.vehicle_history = {}  # track_id -> list of (x, y) positions
+        self.wrong_way_vehicles = set()  # Persistent set of violating vehicles
+        self.trajectory_buffer_size = 10  # Store last 10 positions (0.33s @ 30fps)
     
     def _point_in_zone(self, point: tuple) -> bool:
         """Check if point is inside zone polygon."""
         return cv2.pointPolygonTest(self.polygon, point, False) >= 0
     
-    def _get_direction(self, prev_point: tuple, curr_point: tuple) -> str:
+    def _get_movement_direction(self, trajectory: list) -> str:
         """
-        Determine movement direction - simplified to up/down only.
+        Determine movement direction from trajectory.
+        Uses buffer of positions for smooth, reliable direction detection.
         
-        Returns: "up", "down", or "stationary"
+        Returns:
+            "up", "down", or "stationary"
         """
-        dx = curr_point[0] - prev_point[0]
-        dy = curr_point[1] - prev_point[1]
+        if len(trajectory) < 3:
+            return "stationary"
         
+        # Calculate net movement from first to last position in buffer
+        first_point = trajectory[0]
+        last_point = trajectory[-1]
+        
+        dx = last_point[0] - first_point[0]
+        dy = last_point[1] - first_point[1]
+        
+        # Calculate total movement distance
+        total_distance = math.sqrt(dx**2 + dy**2)
+        
+        # If vehicle barely moved, consider it stationary
+        if total_distance < 3.0:
+            return "stationary"
+        
+        # Determine direction: if vertical movement is dominant
         abs_dx = abs(dx)
         abs_dy = abs(dy)
         
-        # Increase threshold for stationary to handle curve tolerance
-        if abs_dx < 5 and abs_dy < 5:
-            return "stationary"
-        
-        # Only consider up/down movement, ignore horizontal (curve tolerance)
-        if abs_dy > abs_dx * 0.5:  # Allow some horizontal movement for curves
+        # Require at least 60% of movement to be vertical to classify as up/down
+        if abs_dy > abs_dx * 0.6:
+            # dy < 0 means moving UP (in image coords, lower y = up)
+            # dy > 0 means moving DOWN (in image coords, higher y = down)
             return "up" if dy < 0 else "down"
         else:
-            return "stationary"  # Too much horizontal movement, likely curve entry/exit
+            # Too much horizontal movement, likely curving into/out of zone
+            return "stationary"
     
     def update(self, tracker_id: int, x_center: float, y_center: float) -> bool:
         """
@@ -285,40 +313,55 @@ class WrongWayDetector:
         
         Args:
             tracker_id: Vehicle tracking ID
-            x_center: X coordinate of vehicle center
-            y_center: Y coordinate of vehicle center
+            x_center: X coordinate of vehicle centroid
+            y_center: Y coordinate of vehicle centroid
         
         Returns:
             True if vehicle is moving wrong way, False otherwise
         """
         current_point = (x_center, y_center)
+        
+        # Check if centroid is inside/touching zone
         in_zone = self._point_in_zone(current_point)
         
         if not in_zone:
+            # Vehicle outside zone - clear history and remove from violations
             if tracker_id in self.vehicle_history:
                 del self.vehicle_history[tracker_id]
+            self.wrong_way_vehicles.discard(tracker_id)
             return False
         
+        # Initialize trajectory for new vehicle
         if tracker_id not in self.vehicle_history:
             self.vehicle_history[tracker_id] = [current_point]
             return False
         
-        prev_point = self.vehicle_history[tracker_id][-1]
-        direction = self._get_direction(prev_point, current_point)
+        # Add current position to trajectory buffer
+        trajectory = self.vehicle_history[tracker_id]
+        trajectory.append(current_point)
         
-        self.vehicle_history[tracker_id].append(current_point)
+        # Maintain buffer size
+        if len(trajectory) > self.trajectory_buffer_size:
+            trajectory.pop(0)
         
-        if direction == "stationary":
-            return tracker_id in self.wrong_way_vehicles
+        # Get movement direction from trajectory (minimum 3 points for reliability)
+        if len(trajectory) >= 3:
+            movement_direction = self._get_movement_direction(trajectory)
+            
+            # Check if moving in wrong direction
+            if movement_direction != "stationary":
+                is_allowed = (movement_direction == self.zone.allowed_direction)
+                
+                # Mark as wrong-way if moving opposite to allowed direction
+                if not is_allowed:
+                    self.wrong_way_vehicles.add(tracker_id)
+                else:
+                    self.wrong_way_vehicles.discard(tracker_id)
+            else:
+                # Stationary or mostly horizontal movement - not considered wrong-way
+                self.wrong_way_vehicles.discard(tracker_id)
         
-        is_wrong_way = direction != self.zone.allowed_direction
-        
-        if is_wrong_way:
-            self.wrong_way_vehicles.add(tracker_id)
-        else:
-            self.wrong_way_vehicles.discard(tracker_id)
-        
-        return is_wrong_way
+        return tracker_id in self.wrong_way_vehicles
     
     def is_wrong_way(self, tracker_id: int) -> bool:
         """Check if vehicle is marked as wrong way."""

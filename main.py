@@ -249,7 +249,7 @@ def process_hybrid_count_video(
         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
             for frame in frame_gen:
                 try:
-                    model_results = model(frame, verbose=False, conf=0.3, device=device)
+                    model_results = model(frame, verbose=False, conf=0.5, device=device)
                     
                     if model_results is None or len(model_results) == 0:
                         logger.warning("Model returned no results for frame, skipping...")
@@ -332,13 +332,13 @@ def process_hybrid_count_video(
                         
                         # Set colors based on vehicle class (same as trajectory API)
                         if class_id == 2:  # Car (COCO class 2)
-                            box_color = (255, 0, 0)  # Blue
+                            box_color = (0, 255, 255)  # Blue
                         elif class_id == 3:  # Motorcycle (COCO class 3)
                             box_color = (0, 255, 0)  # Green
                         elif class_id == 5:  # Bus (COCO class 5)
-                            box_color = (0, 165, 255)  # Orange
+                            box_color = (255, 255, 255)  # Orange
                         elif class_id == 7:  # Truck (COCO class 7)
-                            box_color = (255, 0, 255)  # Magenta
+                            box_color = (255, 255, 255)  # Magenta
                         else:
                             box_color = (128, 128, 128)  # Gray
                         
@@ -347,7 +347,7 @@ def process_hybrid_count_video(
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
                 
                 # Draw counting line (yellow, thicker)
-                cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
+                cv2.line(frame, start_point, end_point, (0, 200, 255), 5)
                 
                 # Display counts
                 cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
@@ -493,7 +493,7 @@ def process_wrong_way_video(
         with sv.VideoSink(output_path, video_info) as sink:
             for frame in frame_gen:
                 frame_count += 1
-                results = model(frame, verbose=False, conf=0.3, device=device)[0]
+                results = model(frame, verbose=False, conf=0.5, device=device)[0]
                 detections = sv.Detections.from_ultralytics(results)
                 detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
                 detections = assign_tracker_ids(tracker, detections)
@@ -535,8 +535,8 @@ def process_wrong_way_video(
                         
                         is_wrong_way = detector.is_wrong_way(detections.tracker_id[i])
                         
-                        box_color = (0, 0, 255) if is_wrong_way else (255, 0, 0)
-                        text_color = (0, 0, 255) if is_wrong_way else (255, 0, 0)
+                        box_color = (0, 0, 255) if is_wrong_way else (255, 255, 255)
+                        text_color = (0, 0, 255) if is_wrong_way else (255, 255, 255)
                         
                         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
                         cv2.putText(frame, vehicle_class, (x1, y1 - 10),
@@ -548,7 +548,7 @@ def process_wrong_way_video(
                 
                 detector.draw_zone(frame)
                 cv2.putText(frame, f"Wrong Way Count: {wrong_way_count}", (50, 50),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
                 
                 sink.write_frame(frame)
         
