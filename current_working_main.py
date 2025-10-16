@@ -2,46 +2,6 @@
 FastAPI Vehicle Counting Service
 Accepts video uploads and line coordinates to count vehicles.
 """
-# actually this is my model and i am loading the model already 
-# """"
-# FastAPI Vehicle Counting Service
-# Accepts video uploads and line coordinates to count vehicles.
-# """
-# import subprocess
-# import numpy as np
-# from fastapi import FastAPI, UploadFile, File, Form, Response
-# from fastapi.responses import JSONResponse
-# from fastapi.middleware.cors import CORSMiddleware
-# import shutil
-# import os
-# import cv2
-# import supervision as sv
-# import torch
-# import logging
-# from pathlib import Path
-# from typing import Tuple
-# from utilities import (
-#     load_model, init_tracker, VehicleCounter, CLASS_ID, assign_tracker_ids
-# )
-# import tempfile
-# import numpy as np
-# from fast_alpr import ALPR
-# from ultralytics import YOLO
-# from fastapi import FastAPI, UploadFile, File, Form, Response
-# from fastapi.responses import JSONResponse
-# import shutil
-# import cv2
-# import supervision as sv
-# from typing import Tuple
-# from utilities import (
-#     load_model, init_tracker, assign_tracker_ids, CLASS_ID, WrongWayZone, WrongWayDetector, CLASS_NAMES_DICT
-# )
-# # from fastapi import FastAPI, UploadFile, File, Response
-# from speed_estimation import SpeedDetectionProcessor
-# import uuid
-# import random
-# import pinggy
-# import string
 import subprocess
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, Response
@@ -55,10 +15,8 @@ import torch
 import logging
 from pathlib import Path
 from typing import Tuple
-import utilities  # Import the module, not just the objects
 from utilities import (
-    load_model, init_tracker, VehicleCounter, CLASS_ID, assign_tracker_ids,
-    WrongWayZone, WrongWayDetector
+    load_model, init_tracker, VehicleCounter, CLASS_ID, assign_tracker_ids
 )
 import tempfile
 import numpy as np
@@ -70,6 +28,11 @@ import shutil
 import cv2
 import supervision as sv
 from typing import Tuple
+from utilities import (
+    load_model, init_tracker, assign_tracker_ids, CLASS_ID, WrongWayZone, WrongWayDetector, CLASS_NAMES_DICT
+)
+# from fastapi import FastAPI, UploadFile, File, Response
+
 from speed_estimation import SpeedDetectionProcessor
 import uuid
 import random
@@ -135,8 +98,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 model = load_model("rtdetr-x.pt")
-print("loading model")
-print(model.model.names)
 
 
 def create_error_response(error_type: str, message: str, details: str = None):
@@ -237,102 +198,49 @@ def process_vehicle_count_video(
         frame_gen = sv.get_video_frames_generator(input_path)
         box_annotator = sv.BoxAnnotator(thickness=2)
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        
+
+        # Create video info with mp4v codec enforcement
         video_info_mp4v = sv.VideoInfo(
             width=video_info.width,
             height=video_info.height,
             fps=video_info.fps,
             total_frames=video_info.total_frames
         )
-        
+
         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
             for frame in frame_gen:
-                try:
-                    model_results = model(frame, verbose=False, conf=0.3, device=device)
-                    
-                    if model_results is None or len(model_results) == 0:
-                        logger.warning("Model returned no results for frame, skipping...")
-                        cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
-                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
-                        sink.write_frame(frame)
-                        continue
-                    
-                    results = model_results[0]
-                    detections = sv.Detections.from_ultralytics(results)
-                    
-                    if detections is None or len(detections) == 0:
-                        logger.debug("No detections found in frame")
-                        cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
-                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
-                        sink.write_frame(frame)
-                        continue
-                    
-                    detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
-                    detections = assign_tracker_ids(tracker, detections)
-                    
-                except Exception as e:
-                    logger.error(f"Error processing frame: {str(e)}")
-                    cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
-                    cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                    cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
-                    sink.write_frame(frame)
-                    continue
+                results = model(frame, verbose=False, conf=0.3, device=device)[0]
+                detections = sv.Detections.from_ultralytics(results)
+                detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
+                detections = assign_tracker_ids(tracker, detections)
                 
                 for i in range(len(detections.xyxy)):
-                    if (hasattr(detections, 'tracker_id') and 
-                        detections.tracker_id is not None and 
-                        i < len(detections.tracker_id) and 
-                        detections.tracker_id[i] is not None):
+                    if hasattr(detections, 'tracker_id') and detections.tracker_id[i] is not None:
                         x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
                         y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
                         counter.update(detections.tracker_id[i], x_center, y_center)
                 
                 # Custom bounding box drawing with vehicle classes
                 for i in range(len(detections.xyxy)):
-                    if (hasattr(detections, 'tracker_id') and 
-                        detections.tracker_id is not None and 
-                        i < len(detections.tracker_id) and 
-                        detections.tracker_id[i] is not None):
+                    if hasattr(detections, 'tracker_id') and detections.tracker_id[i] is not None:
                         x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                        class_id = detections.class_id[i]
                         
-                        # Use utilities.CLASS_NAMES_DICT to get the updated value
-                        if (detections.class_id is not None and 
-                            i < len(detections.class_id) and 
-                            utilities.CLASS_NAMES_DICT is not None):
-                            class_id = detections.class_id[i]
-                            if class_id is not None and class_id in utilities.CLASS_NAMES_DICT:
-                                vehicle_class = utilities.CLASS_NAMES_DICT[class_id].capitalize()
-                            else:
-                                vehicle_class = "Vehicle"
-                                class_id = None
-                        else:
-                            vehicle_class = "Vehicle"
-                            class_id = None
+                        # Get vehicle class name
+                        vehicle_class = CLASS_NAMES_DICT[class_id].capitalize()
                         
-                        # Set colors based on vehicle class
-                        if class_id == 0:  # Car
-                            box_color = (255, 0, 0)  # Blue
-                        elif class_id == 1:  # Motorcycle  
-                            box_color = (0, 255, 0)  # Green
-                        elif class_id == 2:  # Bus
-                            box_color = (0, 165, 255)  # Orange
-                        elif class_id == 3:  # Truck
-                            box_color = (255, 0, 255)  # Magenta
-                        else:
-                            box_color = (128, 128, 128)  # Gray
+                        # Use blue color for all vehicles (no wrong-way detection here)
+                        box_color = (255, 0, 0)  # Blue
+                        text_color = (255, 0, 0)  # Blue
                         
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3)
+                        # Draw bounding box
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                        
+                        # Draw vehicle class name
                         cv2.putText(frame, vehicle_class, (x1, y1 - 10),
-                                  cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
                 
+                # Draw counting line
                 cv2.line(frame, start_point, end_point, (255, 0, 0), 3)
                 cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
@@ -340,8 +248,12 @@ def process_vehicle_count_video(
                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
                 sink.write_frame(frame)
         
-        # Re-encode video with ffmpeg
+        # Re-encode video with ffmpeg for Chrome compatibility (H.264 + AAC)
+        import subprocess
+        import tempfile
         logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
+        
+        # Create temporary file for web-compatible output
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
         cmd = [
@@ -358,7 +270,9 @@ def process_vehicle_count_video(
         
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed: {result.stderr.decode()}")
+            # Keep original file if ffmpeg fails
         elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
+            # Replace original with web-compatible version
             os.replace(temp_web_output, output_path)
             logger.info(f"Successfully re-encoded video for web compatibility")
         else:
@@ -370,74 +284,138 @@ def process_vehicle_count_video(
         raise Exception(str(e))
 
 
-@app.post("/wrong_way_detection")
-def detect_wrong_way(
-    file: UploadFile = File(..., description="Video file to process"),
-    coordinates: str = Form(..., description="Zone coordinates (8 values): x1,y1,x2,y2,x3,y3,x4,y4"),
-    direction: str = Form(..., description="Allowed direction: up or down")
-):
-    """
-    Detect wrong-way vehicles in a video.
-    """
-    try:
-        input_path = UPLOAD_DIR / file.filename
-        with open(input_path, "wb") as f:
-            f.write(file.file.read())
+# @app.post("/wrong_way_detection")
+# def detect_wrong_way(
+#     file: UploadFile = File(..., description="Video file to process"),
+#     two_way_road: bool = Form(False, description="Enable dual-zone detection for two-way roads"),
+#     # Single zone parameters (used when two_way_road=False)
+#     coordinates: str = Form(None, description="Zone coordinates (8 values): x1,y1,x2,y2,x3,y3,x4,y4 - Required for single zone"),
+#     direction: str = Form(None, description="Allowed direction: up, down, left, right - Required for single zone"),
+#     # Dual zone parameters (used when two_way_road=True)
+#     coordinates_zone_1: str = Form(None, description="Zone 1 coordinates (8 values): x1,y1,x2,y2,x3,y3,x4,y4 - Required for dual zone"),
+#     coordinates_zone_2: str = Form(None, description="Zone 2 coordinates (8 values): x1,y1,x2,y2,x3,y3,x4,y4 - Required for dual zone"),
+#     direction_zone_1: str = Form(None, description="Zone 1 allowed direction: up, down - Required for dual zone"),
+#     direction_zone_2: str = Form(None, description="Zone 2 allowed direction: up, down - Required for dual zone")
+# ):
+#     """
+#     Detect wrong-way vehicles in a video.
+#     """
+#     try:
+#         input_path = UPLOAD_DIR / file.filename
+#         with open(input_path, "wb") as f:
+#            # Generate unique filename to prevent overwriting
+#         # unique_output_path = generate_unique_filename(str(PROCESSED_DIR), "wrong_way", file.filename)0
+#         # unique_output_path = ""
+
+#         output_path = Path("")
         
-        unique_output_path = generate_unique_filename(str(PROCESSED_DIR), "wrong_way", file.filename)
-        output_path = Path(unique_output_path)
+#         # =============================================================================
+#         # SINGLE ZONE MODE (two_way_road = False)
+#         # =============================================================================
+#         if not two_way_road:
+#             if not coordinates or not direction:
+#                 raise ValueError("For single zone mode: coordinates and direction are required")
+            
+#             coords = [int(c.strip()) for c in coordinates.split(',')]
+#             if len(coords) != 8:
+#                 raise ValueError("Coordinates must be 8 values: x1,y1,x2,y2,x3,y3,x4,y4 (top-left, top-right, bottom-right, bottom-left)")
+            
+#             zone_coords = {
+#                 'top_left': (coords[0], coords[1]),     # top-left
+#                 'top_right': (coords[2], coords[3]),    # top-right
+#                 'bottom_right': (coords[4], coords[5]), # bottom-right
+#                 'bottom_left': (coords[6], coords[7])   # bottom-left
+#             }
+            
+#             if direction.lower() not in ["up", "down", "left", "right"]:
+#                 raise ValueError("Direction must be: up, down, left, or right")
+            
+#             # Process single zone
+#             results = process_wrong_way_video(
+#                 str(input_path), 
+#                 str(output_path), 
+#                 zone_coords, 
+#                 direction.lower()
+#             )
         
-        if not coordinates:
-            raise ValueError("Coordinates are required")
+#         # =============================================================================
+#         # DUAL ZONE MODE (two_way_road = True)
+#         # =============================================================================
+#         else:
+#             if not all([coordinates_zone_1, coordinates_zone_2, direction_zone_1, direction_zone_2]):
+#                 raise ValueError("For dual zone mode: coordinates_zone_1, coordinates_zone_2, direction_zone_1, and direction_zone_2 are required")
+            
+#             # Parse zone 1 coordinates
+#             coords_1 = [int(c.strip()) for c in coordinates_zone_1.split(',')]
+#             if len(coords_1) != 8:
+#                 raise ValueError("Zone 1 coordinates must be 8 values: x1,y1,x2,y2,x3,y3,x4,y4")
+            
+#             zone_coords_1 = {
+#                 'top_left': (coords_1[0], coords_1[1]),
+#                 'top_right': (coords_1[2], coords_1[3]),
+#                 'bottom_right': (coords_1[4], coords_1[5]),
+#                 'bottom_left': (coords_1[6], coords_1[7])
+#             }
+            
+#             # Parse zone 2 coordinates
+#             coords_2 = [int(c.strip()) for c in coordinates_zone_2.split(',')]
+#             if len(coords_2) != 8:
+#                 raise ValueError("Zone 2 coordinates must be 8 values: x1,y1,x2,y2,x3,y3,x4,y4")
+            
+#             zone_coords_2 = {
+#                 'top_left': (coords_2[0], coords_2[1]),
+#                 'top_right': (coords_2[2], coords_2[3]),
+#                 'bottom_right': (coords_2[4], coords_2[5]),
+#                 'bottom_left': (coords_2[6], coords_2[7])
+#             }
+            
+#             # Validate directions
+#             if direction_zone_1.lower() not in ["up", "down"]:
+#                 raise ValueError("Zone 1 direction must be: up or down")
+#             if direction_zone_2.lower() not in ["up", "down"]:
+#                 raise ValueError("Zone 2 direction must be: up or down")
+            
+#             # Process dual zones
+#             results = process_dual_zone_wrong_way_video(
+#                 str(input_path), 
+#                 str(output_path), 
+#                 zone_coords_1, 
+#                 zone_coords_2,
+#                 direction_zone_1.lower(),
+#                 direction_zone_2.lower()
+#             )
         
-        coords = [int(c.strip()) for c in coordinates.split(',')]
-        if len(coords) != 8:
-            raise ValueError("Coordinates must be 8 values: x1,y1,x2,y2,x3,y3,x4,y4 (top-left, top-right, bottom-right, bottom-left)")
+#         logger.info(f"Processing video: {file.filename}")
+#         if two_way_road:
+#             logger.info(f"Dual zone mode - Zone 1: {direction_zone_1}, Zone 2: {direction_zone_2}")
+#         else:
+#             logger.info(f"Single zone mode - Direction: {direction}")
         
-        zone_coords = {
-            'top_left': (coords[0], coords[1]),
-            'top_right': (coords[2], coords[3]),
-            'bottom_right': (coords[4], coords[5]),
-            'bottom_left': (coords[6], coords[7])
-        }
+#         # Convert image paths to media URLs
+#         wrong_way_image_urls = []
+#         for img_path in results['wrong_way_images']:
+#             # Extract filename from full path
+#             img_filename = os.path.basename(img_path)
+#             wrong_way_image_urls.append(f"/media/wrong_side/{img_filename}")
         
-        if direction.lower() not in ["up", "down"]:
-            raise ValueError("Direction must be: up or down")
-        
-        logger.info(f"Processing video: {file.filename}")
-        logger.info(f"Zone coordinates: {zone_coords}")
-        logger.info(f"Direction: {direction}")
-        
-        results = process_wrong_way_video(
-            str(input_path), 
-            str(output_path), 
-            zone_coords, 
-            direction.lower()
-        )
-        
-        wrong_way_image_urls = []
-        for img_path in results['wrong_way_images']:
-            img_filename = os.path.basename(img_path)
-            wrong_way_image_urls.append(f"/media/wrong_side/{img_filename}")
-        
-        return JSONResponse({
-            "wrong_way_count": results['wrong_way_count'],
-            "wrong_way_images": wrong_way_image_urls,
-            "output_video": f"/media/{output_path.name}"
-        })
+#         return JSONResponse({
+#             "wrong_way_count": results['wrong_way_count'],
+#             "wrong_way_images": wrong_way_image_urls,
+#             "output_video": f"/media/{output_path.name}"
+#         })
     
-    except ValueError as e:
-        logger.error(f"Validation error: {str(e)}")
-        return JSONResponse(
-            status_code=400,
-            content=create_error_response("validation_error", str(e))
-        )
-    except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content=create_error_response("processing_error", str(e))
-        )
+#     except ValueError as e:
+#         logger.error(f"Validation error: {str(e)}")
+#         return JSONResponse(
+#             status_code=400,
+#             content=create_error_response("validation_error", str(e))
+#         )
+#     except Exception as e:
+#         logger.error(f"Error processing video: {str(e)}")
+#         return JSONResponse(
+#             status_code=500,
+#             content=create_error_response("processing_error", str(e))
+#         )
 
 
 def process_wrong_way_video(
@@ -473,7 +451,7 @@ def process_wrong_way_video(
         os.makedirs(wrong_way_dir, exist_ok=True)
         captured_wrong_way = set()
         frame_count = 0
-        
+
         with sv.VideoSink(output_path, video_info) as sink:
             for frame in frame_gen:
                 frame_count += 1
@@ -492,10 +470,12 @@ def process_wrong_way_video(
                             wrong_way_count += 1
                             counted_ids.add(detections.tracker_id[i])
                             
+                            # Capture wrong-way violation image (only once per vehicle)
                             if detections.tracker_id[i] not in captured_wrong_way:
                                 violation_filename = f"wrong_way_{detections.tracker_id[i]}_{frame_count}.jpg"
                                 violation_path = os.path.join(wrong_way_dir, violation_filename)
                                 
+                                # Crop vehicle region with padding
                                 padding = 20
                                 x1, y1, x2, y2 = map(int, detections.xyxy[i])
                                 crop_x1 = max(0, x1 - padding)
@@ -514,18 +494,24 @@ def process_wrong_way_video(
                         x1, y1, x2, y2 = map(int, detections.xyxy[i])
                         class_id = detections.class_id[i]
                         
-                        # Use utilities.CLASS_NAMES_DICT instead
-                        vehicle_class = utilities.CLASS_NAMES_DICT[class_id].capitalize() if utilities.CLASS_NAMES_DICT else "Vehicle"
+                        # Get vehicle class name
+                        vehicle_class = CLASS_NAMES_DICT[class_id].capitalize()
                         
+                        # Check if vehicle is going wrong way
                         is_wrong_way = detector.is_wrong_way(detections.tracker_id[i])
                         
-                        box_color = (0, 0, 255) if is_wrong_way else (255, 0, 0)
-                        text_color = (0, 0, 255) if is_wrong_way else (255, 0, 0)
+                        # Set colors: red for wrong-way, blue for normal
+                        box_color = (0, 0, 255) if is_wrong_way else (255, 0, 0)  # Red or Blue
+                        text_color = (0, 0, 255) if is_wrong_way else (255, 0, 0)  # Red or Blue
                         
+                        # Draw bounding box
                         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                        
+                        # Draw vehicle class name
                         cv2.putText(frame, vehicle_class, (x1, y1 - 10),
                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, text_color, 2)
                         
+                        # Add "WRONG WAY" text for violations
                         if is_wrong_way:
                             cv2.putText(frame, "WRONG WAY", (x1, y2 + 25),
                                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
@@ -536,8 +522,11 @@ def process_wrong_way_video(
                 
                 sink.write_frame(frame)
         
-        # Re-encode video with ffmpeg
+        # Re-encode video with ffmpeg for Chrome compatibility (H.264 + AAC)
+        import subprocess
         logger.info(f"Re-encoding wrong-way video with ffmpeg for web compatibility: {output_path}")
+        
+        # Create temporary file for web-compatible output
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
         cmd = [
@@ -554,7 +543,9 @@ def process_wrong_way_video(
         
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed for wrong-way video: {result.stderr.decode()}")
+            # Keep original file if ffmpeg fails
         elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
+            # Replace original with web-compatible version
             os.replace(temp_web_output, output_path)
             logger.info(f"Successfully re-encoded wrong-way video for web compatibility")
         else:
@@ -563,6 +554,191 @@ def process_wrong_way_video(
         return {'wrong_way_count': wrong_way_count, 'wrong_way_images': wrong_way_images}
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
+        raise Exception(str(e))
+
+
+# =============================================================================
+# DUAL ZONE WRONG-WAY DETECTION PROCESSING
+# =============================================================================
+
+def process_dual_zone_wrong_way_video(
+    input_path: str,
+    output_path: str,
+    zone_coords_1: dict,
+    zone_coords_2: dict,
+    direction_1: str,
+    direction_2: str
+) -> dict:
+    """
+    Process video with dual-zone wrong-way detection for two-way roads.
+    """
+    try:
+        # Create two zones
+        zone_1 = WrongWayZone(
+            top_left=zone_coords_1['top_left'],
+            top_right=zone_coords_1['top_right'],
+            bottom_left=zone_coords_1['bottom_left'],
+            bottom_right=zone_coords_1['bottom_right'],
+            allowed_direction=direction_1
+        )
+        
+        zone_2 = WrongWayZone(
+            top_left=zone_coords_2['top_left'],
+            top_right=zone_coords_2['top_right'],
+            bottom_left=zone_coords_2['bottom_left'],
+            bottom_right=zone_coords_2['bottom_right'],
+            allowed_direction=direction_2
+        )
+        
+        # Create two detectors
+        detector_1 = WrongWayDetector(zone_1)
+        detector_2 = WrongWayDetector(zone_2)
+        tracker = init_tracker()
+        
+        video_info = sv.VideoInfo.from_video_path(input_path)
+        frame_gen = sv.get_video_frames_generator(input_path)
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        wrong_way_count = 0
+        counted_ids = set()
+        wrong_way_images = []
+        wrong_way_dir = "processed/wrong_side"
+        os.makedirs(wrong_way_dir, exist_ok=True)
+        captured_wrong_way = set()
+        frame_count = 0
+
+        with sv.VideoSink(output_path, video_info) as sink:
+            for frame in frame_gen:
+                frame_count += 1
+                results = model(frame, verbose=False, conf=0.3, device=device)[0]
+                detections = sv.Detections.from_ultralytics(results)
+                detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
+                detections = assign_tracker_ids(tracker, detections)
+                
+                for i in range(len(detections.xyxy)):
+                    if hasattr(detections, 'tracker_id') and detections.tracker_id[i] is not None:
+                        x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
+                        y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
+                        
+                        # Check both zones
+                        is_wrong_1 = detector_1.update(detections.tracker_id[i], x_center, y_center)
+                        is_wrong_2 = detector_2.update(detections.tracker_id[i], x_center, y_center)
+                        
+                        # Count violation if detected in either zone
+                        if (is_wrong_1 or is_wrong_2) and detections.tracker_id[i] not in counted_ids:
+                            wrong_way_count += 1
+                            counted_ids.add(detections.tracker_id[i])
+                            
+                            # Capture wrong-way violation image (only once per vehicle)
+                            if detections.tracker_id[i] not in captured_wrong_way:
+                                violation_filename = f"wrong_way_{detections.tracker_id[i]}_{frame_count}.jpg"
+                                violation_path = os.path.join(wrong_way_dir, violation_filename)
+                                
+                                # Crop vehicle region with padding
+                                padding = 20
+                                x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                                crop_x1 = max(0, x1 - padding)
+                                crop_y1 = max(0, y1 - padding)
+                                crop_x2 = min(frame.shape[1], x2 + padding)
+                                crop_y2 = min(frame.shape[0], y2 + padding)
+                                
+                                vehicle_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                                cv2.imwrite(violation_path, vehicle_crop)
+                                wrong_way_images.append(violation_path)
+                                captured_wrong_way.add(detections.tracker_id[i])
+                
+                # Custom bounding box drawing with vehicle classes
+                for i in range(len(detections.xyxy)):
+                    if hasattr(detections, 'tracker_id') and detections.tracker_id[i] is not None:
+                        x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                        class_id = detections.class_id[i]
+                        
+                        # Get vehicle class name
+                        vehicle_class = CLASS_NAMES_DICT[class_id].capitalize()
+                        
+                        # Check if vehicle is going wrong way in either zone
+                        is_wrong_way = (detector_1.is_wrong_way(detections.tracker_id[i]) or 
+                                       detector_2.is_wrong_way(detections.tracker_id[i]))
+                        
+                        # Set colors based on vehicle class (speed estimation style)
+                        if class_id == 0:  # Car
+                            box_color = (255, 0, 0)  # Blue
+                        elif class_id == 1:  # Motorcycle  
+                            box_color = (0, 255, 0)  # Green
+                        elif class_id == 2:  # Bus
+                            box_color = (0, 165, 255)  # Orange
+                        elif class_id == 3:  # Truck
+                            box_color = (255, 0, 255)  # Magenta
+                        else:
+                            box_color = (128, 128, 128)  # Gray
+                        
+                        # Override with red for wrong-way vehicles
+                        if is_wrong_way:
+                            box_color = (0, 0, 255)  # Red
+                        
+                        # Draw bounding box
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                        
+                        # Draw vehicle class name
+                        cv2.putText(frame, vehicle_class, (x1, y1 - 10),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
+                        
+                        # Add "WRONG WAY" text for violations
+                        if is_wrong_way:
+                            cv2.putText(frame, "WRONG WAY", (x1, y2 + 25),
+                                      cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                
+                # Draw both zones with labels
+                detector_1.draw_zone(frame)
+                detector_2.draw_zone(frame)
+                
+                # Add zone labels
+                zone_1_center = ((zone_coords_1['top_left'][0] + zone_coords_1['bottom_right'][0]) // 2,
+                                (zone_coords_1['top_left'][1] + zone_coords_1['bottom_right'][1]) // 2)
+                zone_2_center = ((zone_coords_2['top_left'][0] + zone_coords_2['bottom_right'][0]) // 2,
+                                (zone_coords_2['top_left'][1] + zone_coords_2['bottom_right'][1]) // 2)
+                
+                cv2.putText(frame, "ZONE 1", zone_1_center, cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 0), 3)  # Cyan
+                cv2.putText(frame, "ZONE 2", zone_2_center, cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 255), 3)  # Magenta
+                
+                # Don't show counter overlay for clean output
+                # cv2.putText(frame, f"Wrong Way Count: {wrong_way_count}", (50, 50),
+                #            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                
+                sink.write_frame(frame)
+        
+        # Re-encode video with ffmpeg for Chrome compatibility (H.264 + AAC)
+        import subprocess
+        logger.info(f"Re-encoding dual-zone wrong-way video with ffmpeg for web compatibility: {output_path}")
+        
+        # Create temporary file for web-compatible output
+        temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(output_path),
+            "-vcodec", "libx264",
+            "-acodec", "aac",
+            "-movflags", "faststart",
+            "-pix_fmt", "yuv420p",
+            temp_web_output
+        ]
+        
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        if result.returncode != 0:
+            logger.error(f"FFmpeg encoding failed for dual-zone wrong-way video: {result.stderr.decode()}")
+            # Keep original file if ffmpeg fails
+        elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
+            # Replace original with web-compatible version
+            os.replace(temp_web_output, output_path)
+            logger.info(f"Successfully re-encoded dual-zone wrong-way video for web compatibility")
+        else:
+            logger.warning(f"FFmpeg produced empty or invalid file for dual-zone wrong-way video, keeping original")
+        
+        return {'wrong_way_count': wrong_way_count, 'wrong_way_images': wrong_way_images}
+    except Exception as e:
+        logger.error(f"Error processing dual-zone video: {str(e)}")
         raise Exception(str(e))
 
 

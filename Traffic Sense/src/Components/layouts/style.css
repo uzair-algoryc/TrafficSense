@@ -1,0 +1,101 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Main layout wrapper */
+.dashboard-mainSection {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  background-color: #f8f9fa;
+}
+
+/* Left sidebar */
+.dashboard-left-section {
+  color: #fff;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.3s ease-in-out;
+  flex-shrink: 0;
+  width: 280px;
+}
+
+/* Right section (Header + Content) */
+.dashboard-right-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  background-color: #ffffff;
+  overflow: hidden; /* prevent full scroll */
+}
+
+/* Keep Header fixed at top */
+.dashboard-right-section header,
+.dashboard-right-section .header {
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: inherit; /* match background */
+}
+
+/* Scrollable content area */
+.dashboard-content {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Dark mode */
+.dark .dashboard-mainSection {
+  background-color: #121212;
+}
+
+.dark .dashboard-right-section {
+  background-color: #1e1e1e;
+}
+/* Layout style.css additions (add these to the existing styles) */
+/* Layout style.css additions (add these to the existing styles) */
+@media (max-width: 768px) {
+  .dashboard-left-section {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100vh;
+    z-index: 1001;
+    background-color: #ffffff;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease-in-out;
+    padding: 0;
+    border-right: 1px solid #e5e5e5;
+  }
+
+  body.sidebar-open-mobile .dashboard-left-section {
+    transform: translateX(0);
+  }
+
+  .dashboard-right-section {
+    width: 100%;
+  }
+
+  .sidebar-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-left-section {
+    width: 80vw;
+    max-width: 280px;
+  }
+}
