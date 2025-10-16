@@ -1248,7 +1248,7 @@ class TrajectoryVehicleCounter:
         self.C = self.line_vec[0] * self.start[1] - self.line_vec[1] * self.start[0]
         
         # Trajectory parameters (optimized for faster response and better accuracy)
-        self.trajectory_buffer_size = 15  # Reduced for faster response (0.5 seconds at 30 FPS)
+        self.trajectory_buffer_size = 25  # Reduced for faster response (0.5 seconds at 30 FPS)
         self.min_points_for_counting = 7  # Reduced for quicker decisions (0.23 seconds at 30 FPS)
         self.direction_threshold = 4.0  # Increased to filter noise better
         

@@ -369,8 +369,8 @@ class HybridVehicleCounter:
         
         # Trajectory parameters
         self.trajectory_buffer_size = 15  # 0.5 seconds at 30 FPS
-        self.min_points_for_counting = 5  # Minimum trajectory length
-        self.movement_threshold = 3.0  # Minimum movement magnitude
+        self.min_points_for_counting = 3  # Minimum trajectory length
+        self.movement_threshold = 2.0  # Minimum movement magnitude
         
         # Vehicle tracking data
         self.vehicle_trajectories = {}  # track_id -> list of (x, y) points
