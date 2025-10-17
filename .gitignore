@@ -16,6 +16,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+./algoryc_traffic_sense
+algoryc_traffic_sense
 parts/
 sdist/
 var/

@@ -44,7 +44,7 @@ Accepts video uploads and line coordinates to count vehicles.
 # import string
 import subprocess
 import numpy as np
-from fastapi import FastAPI, UploadFile, File, Form, Response
+from fastapi import FastAPI, UploadFile, File, Form, Response, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
@@ -52,6 +52,7 @@ import os
 import cv2
 import supervision as sv
 import torch
+from fastapi.responses import FileResponse
 import logging
 from pathlib import Path
 from typing import Tuple
@@ -70,13 +71,55 @@ import shutil
 import cv2
 import supervision as sv
 from typing import Tuple
+from fastapi.staticfiles import StaticFiles
 from speed_estimation import SpeedDetectionProcessor
 import uuid
 import random
 import pinggy
 import string
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
 app = FastAPI(title="Traffic Monitoring APIs", version="1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+model = load_model("rtdetr-x.pt")
+
+UPLOAD_DIR = Path("uploads")
+PROCESSED_DIR = Path("processed")
+UPLOAD_DIR.mkdir(exist_ok=True)
+PROCESSED_DIR.mkdir(exist_ok=True)
+
+vehicle_detector = YOLO("yolo11l.pt")
+vehicle_class_names = ['car', 'motorcycle', 'bus', 'truck']
+allowed_class_ids = [i for i, name in vehicle_detector.names.items() if name in vehicle_class_names]
+
+alpr = ALPR(
+    detector_model="yolo-v9-s-608-license-plate-end2end",
+    ocr_model="cct-s-v1-global-model"
+)
+
+# Mount static files for development (serves files directly like nginx)
+if os.path.exists("processed"):
+    app.mount("/media", StaticFiles(directory="processed"), name="media")
+    logger.info("📁 Media server enabled at /media/ (Development only)")
+    logger.info("💡 Usage: GET /media/filename.mp4 to serve files directly")
+else:
+    logger.warning("⚠️  'processed' directory not found - media server disabled")
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -117,27 +160,19 @@ def generate_unique_filename(base_path: str, prefix: str, original_filename: str
             if not os.path.exists(output_path):
                 return output_path
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-)
+@app.middleware("http")
+async def log_incoming_requests(request: Request, call_next):
+    origin = request.headers.get("origin", "No-Origin")
+    client_host = request.client.host if request.client else "Unknown"
 
-UPLOAD_DIR = Path("uploads")
-PROCESSED_DIR = Path("processed")
-UPLOAD_DIR.mkdir(exist_ok=True)
-PROCESSED_DIR.mkdir(exist_ok=True)
+    logger.info(
+        f"Incoming request from origin: {origin} | "
+        f"client IP: {client_host} | "
+        f"method: {request.method} | path: {request.url.path}"
+    )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-model = load_model("rtdetr-x.pt")
-# print("loading model")
-# print(model.model.names)
-
+    response = await call_next(request)
+    return response
 
 def create_error_response(error_type: str, message: str, details: str = None):
     """Create standardized error response"""
@@ -149,7 +184,6 @@ def create_error_response(error_type: str, message: str, details: str = None):
     if details:
         response["details"] = details
     return response
-
 
 @app.post("/count_vehicles")
 def count_vehicles(
@@ -220,7 +254,6 @@ def count_vehicles(
             status_code=500,
             content=create_error_response("processing_error", str(e))
         )
-
 
 def process_hybrid_count_video(
     input_path: str, 
@@ -455,7 +488,6 @@ def detect_wrong_way(
             content=create_error_response("processing_error", str(e))
         )
 
-
 def process_wrong_way_video(
     input_path: str,
     output_path: str,
@@ -581,7 +613,6 @@ def process_wrong_way_video(
         logger.error(f"Error processing video: {str(e)}")
         raise Exception(str(e))
 
-
 @app.post("/estimate_speed")
 def estimate_speed(
     file: UploadFile = File(...),
@@ -658,7 +689,6 @@ def estimate_speed(
             content=create_error_response("processing_error", str(e))
         )
 
-
 def process_speed_estimation_video(
     input_path: str,
     output_path: str,
@@ -685,16 +715,6 @@ def process_speed_estimation_video(
     except Exception as e:
         logger.error(f"Error processing video: {str(e)}")
         raise Exception(str(e))
-
-
-vehicle_detector = YOLO("yolo11l.pt")
-vehicle_class_names = ['car', 'motorcycle', 'bus', 'truck']
-allowed_class_ids = [i for i, name in vehicle_detector.names.items() if name in vehicle_class_names]
-
-alpr = ALPR(
-    detector_model="yolo-v9-s-608-license-plate-end2end",
-    ocr_model="cct-s-v1-global-model"
-)
 
 def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True):
     """Process uploaded image bytes and return annotated image bytes + vehicle-plate mapping."""
@@ -800,8 +820,6 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True):
                             content=create_error_response("processing_error", str(e)))
 
 
-# app = FastAPI(title="Automatic License Plate Recognition")
-
 @app.post("/alpr_image", summary="Upload one image or provide a path")
 async def alpr_image(
     file: UploadFile = File(None),
@@ -860,8 +878,6 @@ async def alpr_image(
             status_code=500,
             content=create_error_response("processing_error", str(e))
         )
-
-
 
 # def process_alpr_video(video_bytes: bytes) -> bytes:
 #     """Process uploaded video bytes and return annotated video bytes."""
@@ -1106,7 +1122,6 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
             content=create_error_response("processing_error", str(e))
         )
 
-
 @app.post("/alpr_video", summary="Upload video result")
 async def alpr_video(file: UploadFile = File(...)):
     try:
@@ -1137,7 +1152,6 @@ async def alpr_video(file: UploadFile = File(...)):
             content=create_error_response("processing_error", str(e))
         )
 
-from fastapi.responses import FileResponse
 @app.get("/play_video/{video_name}")
 def play_video(video_name: str):
     """
@@ -1236,7 +1250,6 @@ def list_videos():
 # ============================================================================
 # TRAJECTORY-BASED VEHICLE COUNTING SYSTEM
 # ============================================================================
-
 class TrajectoryVehicleCounter:
     """Trajectory-based vehicle counter using movement analysis"""
     
@@ -1383,7 +1396,6 @@ class TrajectoryVehicleCounter:
         self.incoming_count = 0
         self.outgoing_count = 0
 
-
 def process_trajectory_counting_video(
     input_path: str,
     output_path: str, 
@@ -1453,7 +1465,6 @@ def process_trajectory_counting_video(
     except Exception as e:
         logger.error(f"Error processing trajectory video: {str(e)}")
         raise Exception(str(e))
-
 
 @app.post("/count_vehicles_trajectory")
 def count_vehicles_trajectory(
@@ -1531,22 +1542,6 @@ def count_vehicles_trajectory(
             content=create_error_response("processing_error", str(e))
         )
 
-
-# =============================================================================
-# DEVELOPMENT MEDIA SERVER (NGINX-STYLE)
-# =============================================================================
-
-from fastapi.staticfiles import StaticFiles
-
-# Mount static files for development (serves files directly like nginx)
-if os.path.exists("processed"):
-    app.mount("/media", StaticFiles(directory="processed"), name="media")
-    logger.info("📁 Media server enabled at /media/ (Development only)")
-    logger.info("💡 Usage: GET /media/filename.mp4 to serve files directly")
-else:
-    logger.warning("⚠️  'processed' directory not found - media server disabled")
-
-
 # PINGGY
-tunnel = pinggy.start_tunnel(forwardto="localhost:8001")
+tunnel = pinggy.start_tunnel(forwardto="localhost:8000")
 print(f"Tunnel started. Urls: {tunnel.urls}")
