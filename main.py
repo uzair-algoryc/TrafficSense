@@ -135,8 +135,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 model = load_model("rtdetr-x.pt")
-print("loading model")
-print(model.model.names)
+# print("loading model")
+# print(model.model.names)
 
 
 def create_error_response(error_type: str, message: str, details: str = None):
@@ -535,8 +535,8 @@ def process_wrong_way_video(
                         
                         is_wrong_way = detector.is_wrong_way(detections.tracker_id[i])
                         
-                        box_color = (0, 0, 255) if is_wrong_way else (255, 255, 255)
-                        text_color = (0, 0, 255) if is_wrong_way else (255, 255, 255)
+                        box_color = (0, 0, 255) if is_wrong_way else (0, 255, 255)
+                        text_color = (0, 0, 255) if is_wrong_way else (0, 255, 255)
                         
                         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
                         cv2.putText(frame, vehicle_class, (x1, y1 - 10),
@@ -547,8 +547,8 @@ def process_wrong_way_video(
                                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                 
                 detector.draw_zone(frame)
-                cv2.putText(frame, f"Wrong Way Count: {wrong_way_count}", (50, 50),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+                cv2.putText(frame, f"Wrong Way Vehicles Count: {wrong_way_count}", (50, 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 200, 255), 2)
                 
                 sink.write_frame(frame)
         
@@ -709,7 +709,7 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
             raise ValueError("Invalid image data")
 
         original_annotated = image.copy()
-
+        detected_plates = []
         # === Step 1: Detect Vehicles ===
         results = vehicle_detector(image)[0]
         vehicle_boxes = [box for box in results.boxes if int(box.cls.item()) in allowed_class_ids]
@@ -741,6 +741,8 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
             for plate in alpr_results:
                 box = plate.detection.bounding_box
                 text = plate.ocr.text
+                if text:
+                    detected_plates.append(text)
 
                 px1, py1, px2, py2 = box.x1, box.y1, box.x2, box.y2
                 abs_x1 = x1 + int(px1)
@@ -774,7 +776,8 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
         if not success:
             raise ValueError("Failed to encode processed image")
 
-        return buffer.tobytes()
+        # return buffer.tobytes()
+        return buffer.tobytes(), detected_plates, len(vehicle_boxes)
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
         return JSONResponse(
@@ -831,7 +834,7 @@ async def alpr_image(
             f.write(image_bytes)
 
         # === Step 3: Process image ===
-        processed_bytes = process_alpr_image(image_bytes)
+        processed_bytes, detected_plates, vehicle_count = process_alpr_image(image_bytes)
 
         # === Step 4: Save processed output ===
         processed_path = PROCESSED_DIR / f"processed_{input_name}"
@@ -839,10 +842,29 @@ async def alpr_image(
             f.write(processed_bytes)
 
         # === Step 5: Return response ===
-        return {
-            "message": "Processing successful",
-            "output_path": f"/media/{processed_path.name}"
-        }
+        if vehicle_count == 1:
+            if detected_plates:
+                response = {
+                    "message": "Processing successful",
+                    "output_path": f"/media/{processed_path.name}",
+                    "vehicle_count": vehicle_count,
+                    "detected_plate_text": detected_plates[0]
+                }
+            else:
+                response = {
+                    "message": "Processing successful",
+                    "output_path": f"/media/{processed_path.name}",
+                    "vehicle_count": vehicle_count,
+                    "detected_plate_text": "Licence Plate is not clearly visible"
+                }
+        else:
+            response = {
+                "message": "Processing successful",
+                "output_path": f"/media/{processed_path.name}",
+                "vehicle_count": vehicle_count
+            }
+
+        return response
 
     except Exception as e:
         logger.error(f"Error processing image: {str(e)}")
