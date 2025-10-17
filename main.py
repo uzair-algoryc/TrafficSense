@@ -696,12 +696,12 @@ alpr = ALPR(
     ocr_model="cct-s-v1-global-model"
 )
 
-def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> bytes:
-    """Process uploaded image bytes and return annotated image bytes."""
+def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True):
+    """Process uploaded image bytes and return annotated image bytes + vehicle-plate mapping."""
     try:
         if not image_bytes:
             raise ValueError("No image data received. Please check your form-data key name — it must be 'file'.")
-        
+
         np_arr = np.frombuffer(image_bytes, np.uint8)
         image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
@@ -709,7 +709,8 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
             raise ValueError("Invalid image data")
 
         original_annotated = image.copy()
-        detected_plates = []
+        vehicle_plate_map = {}  # <--- Store {vehicle_id: plate_text}
+        
         # === Step 1: Detect Vehicles ===
         results = vehicle_detector(image)[0]
         vehicle_boxes = [box for box in results.boxes if int(box.cls.item()) in allowed_class_ids]
@@ -717,17 +718,19 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
         for i, box in enumerate(vehicle_boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             class_id = int(box.cls.item())
-            class_name = vehicle_detector.names[class_id]
+            class_name = vehicle_detector.names[class_id].capitalize()
+            vehicle_id = f"{class_name}{i+1}"
 
             # Draw vehicle box
             if draw_vehicle_boxes:
                 cv2.rectangle(original_annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(original_annotated, f"{class_name.capitalize()} {i+1}",
+                cv2.putText(original_annotated, vehicle_id,
                             (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
             # Crop vehicle
             vehicle_crop = image[y1:y2, x1:x2]
             if vehicle_crop.shape[0] < 30 or vehicle_crop.shape[1] < 30:
+                vehicle_plate_map[vehicle_id] = "Licence Plate is not clearly visible"
                 continue
 
             # === Step 2: Run ALPR ===
@@ -737,12 +740,15 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
                 cv2.putText(original_annotated, "Licence Plate Is Not Clearly Visible",
                             (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                             (0, 0, 255), 2)
+                vehicle_plate_map[vehicle_id] = "Licence Plate is not clearly visible"
+                continue
 
+            plate_text = None
             for plate in alpr_results:
                 box = plate.detection.bounding_box
-                text = plate.ocr.text
+                text = plate.ocr.text.strip()
                 if text:
-                    detected_plates.append(text)
+                    plate_text = text
 
                 px1, py1, px2, py2 = box.x1, box.y1, box.x2, box.y2
                 abs_x1 = x1 + int(px1)
@@ -750,46 +756,48 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True) -> b
                 abs_x2 = x1 + int(px2)
                 abs_y2 = y1 + int(py2)
 
-                # Draw bounding boxes and OCR text
+                # Draw plate box
                 cv2.rectangle(original_annotated, (abs_x1, abs_y1),
                               (abs_x2, abs_y2), (0, 0, 255), 2)
-                cv2.putText(original_annotated, "Licence Plate", (abs_x1, abs_y1 - 5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                cv2.putText(original_annotated, "Licence Plate",
+                            (abs_x1, abs_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5, (0, 255, 0), 2)
 
+                # Render OCR text on image
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 font_scale = 1.2
                 thickness = 3
                 text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
                 text_x = abs_x1
                 text_y = abs_y1 - 40 if abs_y1 - 40 > 30 else abs_y1 + 30
-
                 cv2.rectangle(original_annotated,
                               (text_x, text_y - text_size[1] - 10),
                               (text_x + text_size[0], text_y),
                               (0, 255, 0), -1)
                 cv2.putText(original_annotated, text,
-                            (text_x, text_y - 5), font, font_scale,
-                            (0, 0, 0), thickness)
+                            (text_x, text_y - 5), font, font_scale, (0, 0, 0), thickness)
 
-        # Encode back to bytes (no saving)
+            # Save final text mapping
+            if plate_text:
+                vehicle_plate_map[vehicle_id] = plate_text
+            elif vehicle_id not in vehicle_plate_map:
+                vehicle_plate_map[vehicle_id] = "Licence Plate is not clearly visible"
+
+        # Encode final annotated image
         success, buffer = cv2.imencode(".jpg", original_annotated)
         if not success:
             raise ValueError("Failed to encode processed image")
 
-        # return buffer.tobytes()
-        return buffer.tobytes(), detected_plates, len(vehicle_boxes)
+        return buffer.tobytes(), vehicle_plate_map, len(vehicle_boxes)
+
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
-        return JSONResponse(
-            status_code=400,
-            content=create_error_response("validation_error", str(e))
-        )
+        return JSONResponse(status_code=400,
+                            content=create_error_response("validation_error", str(e)))
     except Exception as e:
         logger.error(f"Error processing image: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content=create_error_response("processing_error", str(e))
-        )
+        return JSONResponse(status_code=500,
+                            content=create_error_response("processing_error", str(e)))
 
 
 # app = FastAPI(title="Automatic License Plate Recognition")
@@ -828,41 +836,21 @@ async def alpr_image(
         else:
             raise ValueError("No image file or path provided")
 
-        # === Step 2: Save input image ===
-        upload_path = UPLOAD_DIR / input_name
-        with open(upload_path, "wb") as f:
-            f.write(image_bytes)
+        # === Step 2: Process image ===
+        processed_bytes, vehicle_plate_map, vehicle_count = process_alpr_image(image_bytes)
 
-        # === Step 3: Process image ===
-        processed_bytes, detected_plates, vehicle_count = process_alpr_image(image_bytes)
-
-        # === Step 4: Save processed output ===
+        # === Step 3: Save processed output ===
         processed_path = PROCESSED_DIR / f"processed_{input_name}"
         with open(processed_path, "wb") as f:
             f.write(processed_bytes)
 
-        # === Step 5: Return response ===
-        if vehicle_count == 1:
-            if detected_plates:
-                response = {
-                    "message": "Processing successful",
-                    "output_path": f"/media/{processed_path.name}",
-                    "vehicle_count": vehicle_count,
-                    "detected_plate_text": detected_plates[0]
-                }
-            else:
-                response = {
-                    "message": "Processing successful",
-                    "output_path": f"/media/{processed_path.name}",
-                    "vehicle_count": vehicle_count,
-                    "detected_plate_text": "Licence Plate is not clearly visible"
-                }
-        else:
-            response = {
-                "message": "Processing successful",
-                "output_path": f"/media/{processed_path.name}",
-                "vehicle_count": vehicle_count
-            }
+        # === Step 4: Prepare response ===
+        response = {
+            "message": "Processing successful",
+            "output_path": f"/media/{processed_path.name}",
+            "vehicle_count": vehicle_count,
+            "vehicle_plate_results": vehicle_plate_map
+        }
 
         return response
 
@@ -872,6 +860,7 @@ async def alpr_image(
             status_code=500,
             content=create_error_response("processing_error", str(e))
         )
+
 
 
 # def process_alpr_video(video_bytes: bytes) -> bytes:
