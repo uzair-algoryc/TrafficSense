@@ -79,6 +79,11 @@ import uuid
 import random
 import pinggy
 import string
+from dotenv import load_dotenv
+import os
+load_dotenv()
+BASE_MEDIA_PATH = os.getenv("MEDIA_URL", "")
+
 
 # Configure device globally
 
@@ -1031,7 +1036,7 @@ async def alpr_image(
             print("✅ File received:", file.filename, file.content_type)
 
         elif image_path:
-            BASE_MEDIA_PATH = "/home/algoryc/traffic_monitoring_demo/processed"
+            # BASE_MEDIA_PATH = "/home/algoryc/traffic_monitoring_demo/processed"
             if image_path.startswith("/media/"):
                 full_path = os.path.join(BASE_MEDIA_PATH, image_path.lstrip("/media/"))
             else:
