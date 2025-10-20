@@ -721,95 +721,85 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True):
     try:
         if not image_bytes:
             raise ValueError("No image data received. Please check your form-data key name — it must be 'file'.")
-
         np_arr = np.frombuffer(image_bytes, np.uint8)
         image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
         if image is None:
             raise ValueError("Invalid image data")
-
         original_annotated = image.copy()
         vehicle_plate_map = {}  # <--- Store {vehicle_id: plate_text}
         
         # === Step 1: Detect Vehicles ===
         results = vehicle_detector(image)[0]
         vehicle_boxes = [box for box in results.boxes if int(box.cls.item()) in allowed_class_ids]
-
         for i, box in enumerate(vehicle_boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             class_id = int(box.cls.item())
             class_name = vehicle_detector.names[class_id].capitalize()
             vehicle_id = f"{class_name}{i+1}"
-
             # Draw vehicle box
-            if draw_vehicle_boxes:
-                cv2.rectangle(original_annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                cv2.putText(original_annotated, vehicle_id,
-                            (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-
+            # if draw_vehicle_boxes:
+            #     cv2.rectangle(original_annotated, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            #     cv2.putText(original_annotated, vehicle_id,
+            #                 (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
             # Crop vehicle
             vehicle_crop = image[y1:y2, x1:x2]
             if vehicle_crop.shape[0] < 30 or vehicle_crop.shape[1] < 30:
-                vehicle_plate_map[vehicle_id] = "Licence Plate is not clearly visible"
+                vehicle_plate_map[vehicle_id] = "Not Visible"
                 continue
-
             # === Step 2: Run ALPR ===
             alpr_results = alpr.predict(vehicle_crop)
-
             if not alpr_results:
-                cv2.putText(original_annotated, "Licence Plate Is Not Clearly Visible",
+                cv2.putText(original_annotated, "Not Visible",
                             (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                             (0, 0, 255), 2)
-                vehicle_plate_map[vehicle_id] = "Licence Plate is not clearly visible"
+                vehicle_plate_map[vehicle_id] = "Not Visible"
                 continue
-
             plate_text = None
             for plate in alpr_results:
                 box = plate.detection.bounding_box
                 text = plate.ocr.text.strip()
                 if text:
                     plate_text = text
-
                 px1, py1, px2, py2 = box.x1, box.y1, box.x2, box.y2
-                abs_x1 = x1 + int(px1)
-                abs_y1 = y1 + int(py1)
-                abs_x2 = x1 + int(px2)
-                abs_y2 = y1 + int(py2)
-
+                
+                # Add padding to make the bounding box bigger
+                padding = 5
+                
+                abs_x1 = x1 + int(px1) - padding
+                abs_y1 = y1 + int(py1) - padding
+                abs_x2 = x1 + int(px2) + padding
+                abs_y2 = y1 + int(py2) + padding
+                
+                # Draw white bounding box around detected plate
+                cv2.rectangle(original_annotated, (abs_x1, abs_y1), (abs_x2, abs_y2), (255, 255, 255), 2)
                 # Draw plate box
-                cv2.rectangle(original_annotated, (abs_x1, abs_y1),
-                              (abs_x2, abs_y2), (0, 0, 255), 2)
-                cv2.putText(original_annotated, "Licence Plate",
-                            (abs_x1, abs_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5, (0, 255, 0), 2)
-
-                # Render OCR text on image
                 font = cv2.FONT_HERSHEY_SIMPLEX
-                font_scale = 1.2
-                thickness = 3
+                font_scale = 0.5
+                thickness = 1
                 text_size, _ = cv2.getTextSize(text, font, font_scale, thickness)
-                text_x = abs_x1
-                text_y = abs_y1 - 40 if abs_y1 - 40 > 30 else abs_y1 + 30
+                label = "Licence Plate"
+                label_size, _ = cv2.getTextSize(label, font, 0.5, 1)
+                h, w, _ = image.shape
+                text_x = (w - text_size[0]) // 2
+                text_y = (h + text_size[1]) // 2 + 25
                 cv2.rectangle(original_annotated,
-                              (text_x, text_y - text_size[1] - 10),
-                              (text_x + text_size[0], text_y),
-                              (0, 255, 0), -1)
+                            (text_x, text_y - text_size[1] - label_size[1] - 25),
+                            (text_x + max(text_size[0], label_size[0]), text_y),
+                            (50, 50, 50), -1)
+                cv2.putText(original_annotated, label,
+                            (text_x, text_y - text_size[1] - 10), font, 0.5, (255, 255, 255), 2)
                 cv2.putText(original_annotated, text,
-                            (text_x, text_y - 5), font, font_scale, (0, 0, 0), thickness)
-
+                            (text_x, text_y - 5), font, 0.5, (255, 255, 255), thickness)
             # Save final text mapping
             if plate_text:
                 vehicle_plate_map[vehicle_id] = plate_text
             elif vehicle_id not in vehicle_plate_map:
-                vehicle_plate_map[vehicle_id] = "Licence Plate is not clearly visible"
-
+                vehicle_plate_map[vehicle_id] = "Numberplate not visible"
         # Encode final annotated image
         success, buffer = cv2.imencode(".jpg", original_annotated)
         if not success:
             raise ValueError("Failed to encode processed image")
-
         return buffer.tobytes(), vehicle_plate_map, len(vehicle_boxes)
-
     except ValueError as e:
         logger.error(f"Validation error: {str(e)}")
         return JSONResponse(status_code=400,
