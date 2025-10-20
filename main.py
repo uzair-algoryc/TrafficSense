@@ -43,6 +43,8 @@ Accepts video uploads and line coordinates to count vehicles.
 # import pinggy
 # import string
 import subprocess
+import logging
+
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, Response, Request
 from fastapi.responses import JSONResponse
@@ -79,12 +81,7 @@ import pinggy
 import string
 
 # Configure device globally
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-logger.info(f"🚀 Using device: {DEVICE}")
 
-if DEVICE == 'cuda':
-    logger.info(f"GPU Name: {torch.cuda.get_device_name(0)}")
-    logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
     
 # Configure logging
 logging.basicConfig(
@@ -93,6 +90,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+logger.info(f"🚀 Using device: {DEVICE}")
+
+if DEVICE == 'cuda':
+    logger.info(f"GPU Name: {torch.cuda.get_device_name(0)}")
+    logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
 
 app = FastAPI(title="Traffic Monitoring APIs", version="1.0")
 
