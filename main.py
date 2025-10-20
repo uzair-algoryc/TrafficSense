@@ -78,6 +78,14 @@ import random
 import pinggy
 import string
 
+# Configure device globally
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+logger.info(f"🚀 Using device: {DEVICE}")
+
+if DEVICE == 'cuda':
+    logger.info(f"GPU Name: {torch.cuda.get_device_name(0)}")
+    logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +106,8 @@ app.add_middleware(
 )
 
 model = load_model("rtdetr-x.pt")
+model.to(DEVICE)
+logger.info(f"RT-DETR model loaded on {DEVICE}")
 
 UPLOAD_DIR = Path("uploads")
 PROCESSED_DIR = Path("processed")
@@ -105,6 +115,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 PROCESSED_DIR.mkdir(exist_ok=True)
 
 vehicle_detector = YOLO("yolo11l.pt")
+vehicle_detector.to(DEVICE)
+logger.info(f"YOLO vehicle detector loaded on {DEVICE}")
 vehicle_class_names = ['car', 'motorcycle', 'bus', 'truck']
 allowed_class_ids = [i for i, name in vehicle_detector.names.items() if name in vehicle_class_names]
 
@@ -270,7 +282,7 @@ def process_hybrid_count_video(
         
         video_info = sv.VideoInfo.from_video_path(input_path)
         frame_gen = sv.get_video_frames_generator(input_path)
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         video_info_mp4v = sv.VideoInfo(
             width=video_info.width,
@@ -282,7 +294,9 @@ def process_hybrid_count_video(
         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
             for frame in frame_gen:
                 try:
-                    model_results = model(frame, verbose=False, conf=0.5, device=device)
+                    # model_results = model(frame, verbose=False, conf=0.5, device=device)
+                    model_results = model(frame, verbose=False, conf=0.5, device=DEVICE)
+
                     
                     if model_results is None or len(model_results) == 0:
                         logger.warning("Model returned no results for frame, skipping...")
@@ -512,7 +526,7 @@ def process_wrong_way_video(
         video_info = sv.VideoInfo.from_video_path(input_path)
         frame_gen = sv.get_video_frames_generator(input_path)
         box_annotator = sv.BoxAnnotator(thickness=2)
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         wrong_way_count = 0
         counted_ids = set()
@@ -525,7 +539,7 @@ def process_wrong_way_video(
         with sv.VideoSink(output_path, video_info) as sink:
             for frame in frame_gen:
                 frame_count += 1
-                results = model(frame, verbose=False, conf=0.5, device=device)[0]
+                results = model(frame, verbose=False, conf=0.5, device=DEVICE)[0]
                 detections = sv.Detections.from_ultralytics(results)
                 detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
                 detections = assign_tracker_ids(tracker, detections)
@@ -729,7 +743,8 @@ def process_alpr_image(image_bytes: bytes, draw_vehicle_boxes: bool = True):
         vehicle_plate_map = {}  # <--- Store {vehicle_id: plate_text}
         
         # === Step 1: Detect Vehicles ===
-        results = vehicle_detector(image)[0]
+        # results = vehicle_detector(image)[0]
+        results = vehicle_detector(image, device=DEVICE)[0]
         vehicle_boxes = [box for box in results.boxes if int(box.cls.item()) in allowed_class_ids]
         for i, box in enumerate(vehicle_boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
@@ -1026,7 +1041,8 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
             # === Vehicle detection ===
-            results = vehicle_detector(frame)[0]
+            # results = vehicle_detector(frame)[0]
+            results = vehicle_detector(frame, device=DEVICE)[0]
             vehicle_boxes = [box for box in results.boxes if int(box.cls.item()) in allowed_class_ids]
 
             for i, box in enumerate(vehicle_boxes):
@@ -1406,7 +1422,7 @@ def process_trajectory_counting_video(
 
         with sv.VideoSink(output_path, video_info) as sink:
             for frame in frame_gen:
-                results = model(frame, verbose=False, conf=0.5, device=device)[0]
+                results = model(frame, verbose=False, conf=0.5, device=DEVICE)[0]
                 detections = sv.Detections.from_ultralytics(results)
                 detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
                 detections = assign_tracker_ids(tracker, detections)
