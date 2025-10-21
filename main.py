@@ -80,8 +80,10 @@ import random
 import pinggy
 import string
 from dotenv import load_dotenv
+import uvicorn
 import os
 load_dotenv()
+
 BASE_MEDIA_PATH = os.getenv("MEDIA_URL", "")
 
 
@@ -204,6 +206,11 @@ def create_error_response(error_type: str, message: str, details: str = None):
     if details:
         response["details"] = details
     return response
+
+@app.get("/ping")
+def health_check():
+    return {"status": "healthy"}
+
 
 @app.post("/count_vehicles")
 def count_vehicles(
@@ -1745,3 +1752,8 @@ def count_vehicles_trajectory(
 # PINGGY
 tunnel = pinggy.start_tunnel(forwardto="localhost:8000")
 print(f"Tunnel started. Urls: {tunnel.urls}")
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 80))
+    uvicorn.run(app, host="0.0.0.0", port=port)
