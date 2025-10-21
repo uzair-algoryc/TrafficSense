@@ -275,192 +275,6 @@ def count_vehicles(
             content=create_error_response("processing_error", str(e))
         )
 
-def process_hybrid_count_video(
-    input_path: str, 
-    output_path: str, 
-    start_point: Tuple[int, int], 
-    end_point: Tuple[int, int]
-):
-    """
-    GPU-maximized video processing with hardware decoding.
-    """
-    try:
-        tracker = init_tracker()
-        counter = HybridVehicleCounter(start_point, end_point)
-        
-        video_info = sv.VideoInfo.from_video_path(input_path)
-        
-        # Use hardware video decoding (NVIDIA NVDEC)
-        cap = cv2.VideoCapture(input_path)
-        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
-        
-        video_info_mp4v = sv.VideoInfo(
-            width=video_info.width,
-            height=video_info.height,
-            fps=video_info.fps,
-            total_frames=video_info.total_frames
-        )
-        
-        # Max GPU utilization settings
-        torch.cuda.set_per_process_memory_fraction(0.95)  # Use 95% VRAM
-        torch.cuda.empty_cache()
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = False
-        
-        # Adaptive batch sizing based on video resolution
-        resolution = video_info.width * video_info.height
-        if resolution > 1920 * 1080:  # 4K
-            batch_size = 4
-        elif resolution > 1280 * 720:  # 1080p
-            batch_size = 12
-        else:  # 720p or lower
-            batch_size = 16
-        
-        frame_batch = []
-        frame_list = []
-        
-        # Pre-load all frames to GPU if video is small enough
-        try:
-            logger.info("Loading video frames...")
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame_list.append(frame)
-            
-            cap.release()
-            logger.info(f"Loaded {len(frame_list)} frames. Processing on GPU...")
-        except Exception as e:
-            logger.error(f"Frame pre-loading failed: {e}, using streaming mode")
-            cap = cv2.VideoCapture(input_path)
-        
-        with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
-            # Use pre-loaded frames if available
-            frames_to_process = frame_list if frame_list else []
-            
-            if not frames_to_process:
-                # Fallback: stream mode
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    frames_to_process.append(frame)
-            
-            # Process all frames in largest possible batches
-            for batch_start in range(0, len(frames_to_process), batch_size):
-                batch_end = min(batch_start + batch_size, len(frames_to_process))
-                frame_batch = frames_to_process[batch_start:batch_end]
-                
-                # Full GPU inference
-                model_results = model(
-                    frame_batch, 
-                    verbose=False, 
-                    conf=0.5, 
-                    device=DEVICE,
-                    augment=False,
-                    imgsz=640,
-                    half=True  # Use FP16 for 2x speedup and memory saving
-                )
-                
-                # Process results
-                for idx, results in enumerate(model_results):
-                    frame = frame_batch[idx]
-                    
-                    try:
-                        detections = sv.Detections.from_ultralytics(results)
-                        
-                        if detections is None or len(detections) == 0:
-                            cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-                            cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                            cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                       cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-                            sink.write_frame(frame)
-                            continue
-                        
-                        detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
-                        detections = assign_tracker_ids(tracker, detections)
-                        
-                        # Update counter
-                        for i in range(len(detections.xyxy)):
-                            if (hasattr(detections, 'tracker_id') and 
-                                detections.tracker_id is not None and 
-                                i < len(detections.tracker_id) and 
-                                detections.tracker_id[i] is not None):
-                                x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
-                                y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
-                                counter.update(detections.tracker_id[i], x_center, y_center)
-                        
-                        # Draw boxes
-                        for i in range(len(detections.xyxy)):
-                            if (hasattr(detections, 'tracker_id') and 
-                                detections.tracker_id is not None and 
-                                i < len(detections.tracker_id) and 
-                                detections.tracker_id[i] is not None):
-                                x1, y1, x2, y2 = map(int, detections.xyxy[i])
-                                
-                                if (detections.class_id is not None and 
-                                    i < len(detections.class_id) and 
-                                    utilities.CLASS_NAMES_DICT is not None):
-                                    class_id = detections.class_id[i]
-                                    if class_id is not None and class_id in utilities.CLASS_NAMES_DICT:
-                                        vehicle_class = utilities.CLASS_NAMES_DICT[class_id].capitalize()
-                                    else:
-                                        vehicle_class = "Vehicle"
-                                else:
-                                    vehicle_class = "Vehicle"
-                                
-                                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 3)
-                                cv2.putText(frame, vehicle_class, (x1, y1 - 10),
-                                          cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-                        
-                        cv2.line(frame, start_point, end_point, (0, 200, 255), 5)
-                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-                        
-                        sink.write_frame(frame)
-                    
-                    except Exception as e:
-                        logger.error(f"Error processing frame: {str(e)}")
-                        sink.write_frame(frame)
-                
-                # Aggressively free GPU memory between batches
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-        
-        cap.release()
-        
-        # Re-encode video
-        logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
-        temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
-        
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(output_path),
-            "-vcodec", "libx264",
-            "-acodec", "aac",
-            "-movflags", "faststart",
-            "-pix_fmt", "yuv420p",
-            temp_web_output
-        ]
-        
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        if result.returncode != 0:
-            logger.error(f"FFmpeg encoding failed: {result.stderr.decode()}")
-        elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
-            os.replace(temp_web_output, output_path)
-            logger.info(f"Successfully re-encoded video for web compatibility")
-        else:
-            logger.warning(f"FFmpeg produced empty or invalid file, keeping original")
-        
-        return counter.get_counts()
-    except Exception as e:
-        logger.error(f"Error processing video: {str(e)}")
-        raise Exception(str(e))
-    
 # def process_hybrid_count_video(
 #     input_path: str, 
 #     output_path: str, 
@@ -468,15 +282,17 @@ def process_hybrid_count_video(
 #     end_point: Tuple[int, int]
 # ):
 #     """
-#     Process video with hybrid trajectory-based vehicle counting.
+#     GPU-maximized video processing with hardware decoding.
 #     """
 #     try:
 #         tracker = init_tracker()
 #         counter = HybridVehicleCounter(start_point, end_point)
         
 #         video_info = sv.VideoInfo.from_video_path(input_path)
-#         frame_gen = sv.get_video_frames_generator(input_path)
-#         # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+#         # Use hardware video decoding (NVIDIA NVDEC)
+#         cap = cv2.VideoCapture(input_path)
+#         cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
         
 #         video_info_mp4v = sv.VideoInfo(
 #             width=video_info.width,
@@ -485,120 +301,138 @@ def process_hybrid_count_video(
 #             total_frames=video_info.total_frames
 #         )
         
-#         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
-#             for frame in frame_gen:
-#                 try:
-#                     # model_results = model(frame, verbose=False, conf=0.5, device=device)
-#                     model_results = model(frame, verbose=False, conf=0.5, device=DEVICE)
-
-                    
-#                     if model_results is None or len(model_results) == 0:
-#                         logger.warning("Model returned no results for frame, skipping...")
-#                         cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-#                         cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-#                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-#                         cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-#                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-#                         sink.write_frame(frame)
-#                         continue
-                    
-#                     results = model_results[0]
-#                     detections = sv.Detections.from_ultralytics(results)
-                    
-#                     if detections is None or len(detections) == 0:
-#                         logger.debug("No detections found in frame")
-#                         cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-#                         cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-#                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-#                         cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-#                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-#                         sink.write_frame(frame)
-#                         continue
-                    
-#                     detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
-#                     detections = assign_tracker_ids(tracker, detections)
-                    
-#                 except Exception as e:
-#                     logger.error(f"Error processing frame: {str(e)}")
-#                     cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-#                     cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-#                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-#                     cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-#                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-#                     sink.write_frame(frame)
-#                     continue
-                
-#                 # Update trajectory counter
-#                 for i in range(len(detections.xyxy)):
-#                     if (hasattr(detections, 'tracker_id') and 
-#                         detections.tracker_id is not None and 
-#                         i < len(detections.tracker_id) and 
-#                         detections.tracker_id[i] is not None):
-#                         x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
-#                         y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
-#                         counter.update(detections.tracker_id[i], x_center, y_center)
-                
-#                 # Draw trajectory trails for active vehicles (magenta trails)
-#                 # for track_id, trajectory in counter.vehicle_trajectories.items():
-#                 #     if len(trajectory) > 1:
-#                 #         # Draw trajectory trail with gradient (newer points brighter)
-#                 #         for j in range(1, len(trajectory)):
-#                 #             pt1 = tuple(map(int, trajectory[j-1]))
-#                 #             pt2 = tuple(map(int, trajectory[j]))
-#                 #             # Color intensity based on recency (newer = brighter)
-#                 #             intensity = int(255 * (j / len(trajectory)))
-#                 #             cv2.line(frame, pt1, pt2, (intensity, 0, 255), 2)  # Magenta trail
-                
-#                 # Custom bounding box drawing with vehicle classes (color-coded)
-#                 for i in range(len(detections.xyxy)):
-#                     if (hasattr(detections, 'tracker_id') and 
-#                         detections.tracker_id is not None and 
-#                         i < len(detections.tracker_id) and 
-#                         detections.tracker_id[i] is not None):
-#                         x1, y1, x2, y2 = map(int, detections.xyxy[i])
-                        
-#                         # Use utilities.CLASS_NAMES_DICT to get the updated value
-#                         if (detections.class_id is not None and 
-#                             i < len(detections.class_id) and 
-#                             utilities.CLASS_NAMES_DICT is not None):
-#                             class_id = detections.class_id[i]
-#                             if class_id is not None and class_id in utilities.CLASS_NAMES_DICT:
-#                                 vehicle_class = utilities.CLASS_NAMES_DICT[class_id].capitalize()
-#                             else:
-#                                 vehicle_class = "Vehicle"
-#                                 class_id = None
-#                         else:
-#                             vehicle_class = "Vehicle"
-#                             class_id = None
-                        
-#                         # Set colors based on vehicle class (same as trajectory API)
-#                         if class_id == 2:  # Car (COCO class 2)
-#                             box_color = (0, 255, 255)  # Blue
-#                         elif class_id == 3:  # Motorcycle (COCO class 3)
-#                             box_color = (0, 255, 0)  # Green
-#                         elif class_id == 5:  # Bus (COCO class 5)
-#                             box_color = (255, 255, 255)  # Orange
-#                         elif class_id == 7:  # Truck (COCO class 7)
-#                             box_color = (255, 255, 255)  # Magenta
-#                         else:
-#                             box_color = (128, 128, 128)  # Gray
-                        
-#                         cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3)
-#                         cv2.putText(frame, vehicle_class, (x1, y1 - 10),
-#                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
-                
-#                 # Draw counting line (yellow, thicker)
-#                 cv2.line(frame, start_point, end_point, (0, 200, 255), 5)
-                
-#                 # Display counts
-#                 cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-#                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-#                 cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-#                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
-                
-#                 sink.write_frame(frame)
+#         # Max GPU utilization settings
+#         torch.cuda.set_per_process_memory_fraction(0.95)  # Use 95% VRAM
+#         torch.cuda.empty_cache()
+#         torch.backends.cudnn.benchmark = True
+#         torch.backends.cudnn.deterministic = False
         
-#         # Re-encode video with ffmpeg for Chrome compatibility (H.264 + AAC)
+#         # Adaptive batch sizing based on video resolution
+#         resolution = video_info.width * video_info.height
+#         if resolution > 1920 * 1080:  # 4K
+#             batch_size = 4
+#         elif resolution > 1280 * 720:  # 1080p
+#             batch_size = 12
+#         else:  # 720p or lower
+#             batch_size = 16
+        
+#         frame_batch = []
+#         frame_list = []
+        
+#         # Pre-load all frames to GPU if video is small enough
+#         try:
+#             logger.info("Loading video frames...")
+#             while True:
+#                 ret, frame = cap.read()
+#                 if not ret:
+#                     break
+#                 frame_list.append(frame)
+            
+#             cap.release()
+#             logger.info(f"Loaded {len(frame_list)} frames. Processing on GPU...")
+#         except Exception as e:
+#             logger.error(f"Frame pre-loading failed: {e}, using streaming mode")
+#             cap = cv2.VideoCapture(input_path)
+        
+#         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
+#             # Use pre-loaded frames if available
+#             frames_to_process = frame_list if frame_list else []
+            
+#             if not frames_to_process:
+#                 # Fallback: stream mode
+#                 while True:
+#                     ret, frame = cap.read()
+#                     if not ret:
+#                         break
+#                     frames_to_process.append(frame)
+            
+#             # Process all frames in largest possible batches
+#             for batch_start in range(0, len(frames_to_process), batch_size):
+#                 batch_end = min(batch_start + batch_size, len(frames_to_process))
+#                 frame_batch = frames_to_process[batch_start:batch_end]
+                
+#                 # Full GPU inference
+#                 model_results = model(
+#                     frame_batch, 
+#                     verbose=False, 
+#                     conf=0.5, 
+#                     device=DEVICE,
+#                     augment=False,
+#                     imgsz=640,
+#                     half=True  # Use FP16 for 2x speedup and memory saving
+#                 )
+                
+#                 # Process results
+#                 for idx, results in enumerate(model_results):
+#                     frame = frame_batch[idx]
+                    
+#                     try:
+#                         detections = sv.Detections.from_ultralytics(results)
+                        
+#                         if detections is None or len(detections) == 0:
+#                             cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
+#                             cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
+#                                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+#                             cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
+#                                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+#                             sink.write_frame(frame)
+#                             continue
+                        
+#                         detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
+#                         detections = assign_tracker_ids(tracker, detections)
+                        
+#                         # Update counter
+#                         for i in range(len(detections.xyxy)):
+#                             if (hasattr(detections, 'tracker_id') and 
+#                                 detections.tracker_id is not None and 
+#                                 i < len(detections.tracker_id) and 
+#                                 detections.tracker_id[i] is not None):
+#                                 x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
+#                                 y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
+#                                 counter.update(detections.tracker_id[i], x_center, y_center)
+                        
+#                         # Draw boxes
+#                         for i in range(len(detections.xyxy)):
+#                             if (hasattr(detections, 'tracker_id') and 
+#                                 detections.tracker_id is not None and 
+#                                 i < len(detections.tracker_id) and 
+#                                 detections.tracker_id[i] is not None):
+#                                 x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                                
+#                                 if (detections.class_id is not None and 
+#                                     i < len(detections.class_id) and 
+#                                     utilities.CLASS_NAMES_DICT is not None):
+#                                     class_id = detections.class_id[i]
+#                                     if class_id is not None and class_id in utilities.CLASS_NAMES_DICT:
+#                                         vehicle_class = utilities.CLASS_NAMES_DICT[class_id].capitalize()
+#                                     else:
+#                                         vehicle_class = "Vehicle"
+#                                 else:
+#                                     vehicle_class = "Vehicle"
+                                
+#                                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 3)
+#                                 cv2.putText(frame, vehicle_class, (x1, y1 - 10),
+#                                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                        
+#                         cv2.line(frame, start_point, end_point, (0, 200, 255), 5)
+#                         cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
+#                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+#                         cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
+#                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                        
+#                         sink.write_frame(frame)
+                    
+#                     except Exception as e:
+#                         logger.error(f"Error processing frame: {str(e)}")
+#                         sink.write_frame(frame)
+                
+#                 # Aggressively free GPU memory between batches
+#                 torch.cuda.empty_cache()
+#                 torch.cuda.synchronize()
+        
+#         cap.release()
+        
+#         # Re-encode video
 #         logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
 #         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
@@ -626,6 +460,172 @@ def process_hybrid_count_video(
 #     except Exception as e:
 #         logger.error(f"Error processing video: {str(e)}")
 #         raise Exception(str(e))
+    
+def process_hybrid_count_video(
+    input_path: str, 
+    output_path: str, 
+    start_point: Tuple[int, int], 
+    end_point: Tuple[int, int]
+):
+    """
+    Process video with hybrid trajectory-based vehicle counting.
+    """
+    try:
+        tracker = init_tracker()
+        counter = HybridVehicleCounter(start_point, end_point)
+        
+        video_info = sv.VideoInfo.from_video_path(input_path)
+        frame_gen = sv.get_video_frames_generator(input_path)
+        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        video_info_mp4v = sv.VideoInfo(
+            width=video_info.width,
+            height=video_info.height,
+            fps=video_info.fps,
+            total_frames=video_info.total_frames
+        )
+        
+        with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
+            for frame in frame_gen:
+                try:
+                    # model_results = model(frame, verbose=False, conf=0.5, device=device)
+                    model_results = model(frame, verbose=False, conf=0.5, device=DEVICE)
+
+                    
+                    if model_results is None or len(model_results) == 0:
+                        logger.warning("Model returned no results for frame, skipping...")
+                        cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
+                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                        sink.write_frame(frame)
+                        continue
+                    
+                    results = model_results[0]
+                    detections = sv.Detections.from_ultralytics(results)
+                    
+                    if detections is None or len(detections) == 0:
+                        logger.debug("No detections found in frame")
+                        cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
+                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                        sink.write_frame(frame)
+                        continue
+                    
+                    detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
+                    detections = assign_tracker_ids(tracker, detections)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing frame: {str(e)}")
+                    cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
+                    cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                    cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
+                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                    sink.write_frame(frame)
+                    continue
+                
+                # Update trajectory counter
+                for i in range(len(detections.xyxy)):
+                    if (hasattr(detections, 'tracker_id') and 
+                        detections.tracker_id is not None and 
+                        i < len(detections.tracker_id) and 
+                        detections.tracker_id[i] is not None):
+                        x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
+                        y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
+                        counter.update(detections.tracker_id[i], x_center, y_center)
+                
+                # Draw trajectory trails for active vehicles (magenta trails)
+                # for track_id, trajectory in counter.vehicle_trajectories.items():
+                #     if len(trajectory) > 1:
+                #         # Draw trajectory trail with gradient (newer points brighter)
+                #         for j in range(1, len(trajectory)):
+                #             pt1 = tuple(map(int, trajectory[j-1]))
+                #             pt2 = tuple(map(int, trajectory[j]))
+                #             # Color intensity based on recency (newer = brighter)
+                #             intensity = int(255 * (j / len(trajectory)))
+                #             cv2.line(frame, pt1, pt2, (intensity, 0, 255), 2)  # Magenta trail
+                
+                # Custom bounding box drawing with vehicle classes (color-coded)
+                for i in range(len(detections.xyxy)):
+                    if (hasattr(detections, 'tracker_id') and 
+                        detections.tracker_id is not None and 
+                        i < len(detections.tracker_id) and 
+                        detections.tracker_id[i] is not None):
+                        x1, y1, x2, y2 = map(int, detections.xyxy[i])
+                        
+                        # Use utilities.CLASS_NAMES_DICT to get the updated value
+                        if (detections.class_id is not None and 
+                            i < len(detections.class_id) and 
+                            utilities.CLASS_NAMES_DICT is not None):
+                            class_id = detections.class_id[i]
+                            if class_id is not None and class_id in utilities.CLASS_NAMES_DICT:
+                                vehicle_class = utilities.CLASS_NAMES_DICT[class_id].capitalize()
+                            else:
+                                vehicle_class = "Vehicle"
+                                class_id = None
+                        else:
+                            vehicle_class = "Vehicle"
+                            class_id = None
+                        
+                        # Set colors based on vehicle class (same as trajectory API)
+                        if class_id == 2:  # Car (COCO class 2)
+                            box_color = (0, 255, 255)  # Blue
+                        elif class_id == 3:  # Motorcycle (COCO class 3)
+                            box_color = (0, 255, 0)  # Green
+                        elif class_id == 5:  # Bus (COCO class 5)
+                            box_color = (255, 255, 255)  # Orange
+                        elif class_id == 7:  # Truck (COCO class 7)
+                            box_color = (255, 255, 255)  # Magenta
+                        else:
+                            box_color = (128, 128, 128)  # Gray
+                        
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 3)
+                        cv2.putText(frame, vehicle_class, (x1, y1 - 10),
+                                  cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
+                
+                # Draw counting line (yellow, thicker)
+                cv2.line(frame, start_point, end_point, (0, 200, 255), 5)
+                
+                # Display counts
+                cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                
+                sink.write_frame(frame)
+        
+        # Re-encode video with ffmpeg for Chrome compatibility (H.264 + AAC)
+        logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
+        temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(output_path),
+            "-vcodec", "libx264",
+            "-acodec", "aac",
+            "-movflags", "faststart",
+            "-pix_fmt", "yuv420p",
+            temp_web_output
+        ]
+        
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        if result.returncode != 0:
+            logger.error(f"FFmpeg encoding failed: {result.stderr.decode()}")
+        elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
+            os.replace(temp_web_output, output_path)
+            logger.info(f"Successfully re-encoded video for web compatibility")
+        else:
+            logger.warning(f"FFmpeg produced empty or invalid file, keeping original")
+        
+        return counter.get_counts()
+    except Exception as e:
+        logger.error(f"Error processing video: {str(e)}")
+        raise Exception(str(e))
 
 @app.post("/wrong_way_detection")
 def detect_wrong_way(
