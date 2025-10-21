@@ -720,7 +720,7 @@ def process_wrong_way_video(
         video_info = sv.VideoInfo.from_video_path(input_path)
         frame_gen = sv.get_video_frames_generator(input_path)
         box_annotator = sv.BoxAnnotator(thickness=2)
-        # device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         wrong_way_count = 0
         counted_ids = set()
@@ -733,7 +733,7 @@ def process_wrong_way_video(
         with sv.VideoSink(output_path, video_info) as sink:
             for frame in frame_gen:
                 frame_count += 1
-                results = model(frame, verbose=False, conf=0.5, device=DEVICE)[0]
+                results = model(frame, verbose=False, conf=0.5, device=device)[0]
                 detections = sv.Detections.from_ultralytics(results)
                 detections = detections[[cls in CLASS_ID for cls in detections.class_id]]
                 detections = assign_tracker_ids(tracker, detections)
