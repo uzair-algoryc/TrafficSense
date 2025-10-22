@@ -44,7 +44,7 @@ Accepts video uploads and line coordinates to count vehicles.
 # import string
 import subprocess
 import logging
-
+import time
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, Response, Request
 from fastapi.responses import JSONResponse
@@ -207,9 +207,9 @@ def create_error_response(error_type: str, message: str, details: str = None):
         response["details"] = details
     return response
 
-@app.get("/ping")
-def health_check():
-    return {"status": "healthy"}
+# @app.get("/ping")
+# def health_check():
+#     return {"status": "healthy"}
 
 
 @app.post("/count_vehicles")
@@ -609,18 +609,34 @@ def process_hybrid_count_video(
         logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
+        # cmd = [
+        #     "ffmpeg", "-y",
+        #     "-i", str(output_path),
+        #     "-vcodec", "libx264",
+        #     "-preset", "ultrafast",  # Much faster than default
+        #     "-crf", "23",
+        #     "-pix_fmt", "yuv420p",
+        #     "-movflags", "faststart",
+        #     temp_web_output
+        # ]
         cmd = [
             "ffmpeg", "-y",
+            "-hwaccel", "cuda",
             "-i", str(output_path),
-            "-vcodec", "libx264",
-            "-acodec", "aac",
-            "-movflags", "faststart",
+            "-c:v", "h264_nvenc",   # GPU accelerated encoder
+            "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
+            "-movflags", "faststart",
             temp_web_output
         ]
+        ffmpeg_start_time = time.time()
+
         
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
+        ffmpeg_end_time = time.time()
+        ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
+
+        logger.info(f"FFmpeg re-encoding took: {ffmpeg_duration:.2f} seconds")
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed: {result.stderr.decode()}")
         elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
@@ -803,17 +819,37 @@ def process_wrong_way_video(
         logger.info(f"Re-encoding wrong-way video with ffmpeg for web compatibility: {output_path}")
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
+        # cmd = [
+        #     "ffmpeg", "-y",
+        #     "-i", str(output_path),
+        #     "-vcodec", "libx264",
+        #     "-acodec", "aac",
+        #     "-movflags", "faststart",
+        #     "-pix_fmt", "yuv420p",
+        #     temp_web_output
+        # ]
+        
         cmd = [
             "ffmpeg", "-y",
+            "-hwaccel", "cuda",
             "-i", str(output_path),
-            "-vcodec", "libx264",
-            "-acodec", "aac",
-            "-movflags", "faststart",
+            "-c:v", "h264_nvenc",   # GPU accelerated encoder
+            "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
+            "-movflags", "faststart",
             temp_web_output
         ]
         
+        
+        # ffmpeg_end_time = time.time()
+        
+        # result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ffmpeg_start_time = time.time()
+
+        
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ffmpeg_end_time = time.time()
+        ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
         
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed for wrong-way video: {result.stderr.decode()}")
@@ -1296,16 +1332,32 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
         # === Step 2: Re-encode for Chrome compatibility (H.264 + AAC) ===
         chrome_safe_output = temp_output_path.replace(".mp4", "_web.mp4")
 
+        # cmd = [
+        #     "ffmpeg", "-y",
+        #     "-i", temp_output_path,
+        #     "-vcodec", "libx264",
+        #     "-acodec", "aac",
+        #     "-movflags", "faststart",
+        #     "-pix_fmt", "yuv420p",
+        #     chrome_safe_output
+        # ]
         cmd = [
             "ffmpeg", "-y",
-            "-i", temp_output_path,
-            "-vcodec", "libx264",
-            "-acodec", "aac",
-            "-movflags", "faststart",
+            "-hwaccel", "cuda",
+            "-i", str(temp_output_path),
+            "-c:v", "h264_nvenc",   # GPU accelerated encoder
+            "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
+            "-movflags", "faststart",
             chrome_safe_output
         ]
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        # subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ffmpeg_start_time = time.time()
+
+        
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ffmpeg_end_time = time.time()
+        ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
 
         if not os.path.exists(chrome_safe_output) or os.path.getsize(chrome_safe_output) < 1024:
             raise ValueError("FFmpeg re-encoding failed or produced empty file")
@@ -1749,14 +1801,14 @@ def count_vehicles_trajectory(
             content=create_error_response("processing_error", str(e))
         )
 
-# PINGGY
-tunnel = pinggy.start_tunnel(forwardto="localhost:8000")
-print(f"Tunnel started. Urls: {tunnel.urls}")
+# # PINGGY
+# tunnel = pinggy.start_tunnel(forwardto="localhost:8000")
+# print(f"Tunnel started. Urls: {tunnel.urls}")
 
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 80))
-    uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=600)
+# if __name__ == "__main__":
+#     port = int(os.getenv("PORT", 80))
+#     uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=600)
 
 
 
