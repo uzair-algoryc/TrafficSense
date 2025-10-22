@@ -627,6 +627,7 @@ def process_hybrid_count_video(
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
+            "-c:a", "aac",
             temp_web_output
         ]
         ffmpeg_start_time = time.time()
@@ -837,6 +838,7 @@ def process_wrong_way_video(
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
+            "-c:a", "aac",
             temp_web_output
         ]
         
@@ -1351,6 +1353,7 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
+            "-c:a", "aac",
             chrome_safe_output
         ]
         # subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

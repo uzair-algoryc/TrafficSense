@@ -450,6 +450,7 @@ class SpeedDetectionProcessor:
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
+            "-c:a", "aac",
             temp_web_output
         ]
         ffmpeg_start_time = time.time()
