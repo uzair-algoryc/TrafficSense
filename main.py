@@ -623,7 +623,7 @@ def process_hybrid_count_video(
             "ffmpeg", "-y",
             "-hwaccel", "cuda",
             "-i", str(output_path),
-            "-c:v", "h264_nvenc",   # GPU accelerated encoder
+            "-c:v", "libx264",   # GPU accelerated encoder
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
@@ -833,7 +833,7 @@ def process_wrong_way_video(
             "ffmpeg", "-y",
             "-hwaccel", "cuda",
             "-i", str(output_path),
-            "-c:v", "h264_nvenc",   # GPU accelerated encoder
+            "-c:v", "libx264",   # GPU accelerated encoder
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
@@ -851,6 +851,8 @@ def process_wrong_way_video(
         ffmpeg_end_time = time.time()
         ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
         
+        logger.info(f"FFmpeg re-encoding took: {ffmpeg_duration:.2f} seconds")
+                
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed for wrong-way video: {result.stderr.decode()}")
         elif os.path.exists(temp_web_output) and os.path.getsize(temp_web_output) > 1024:
@@ -1345,7 +1347,7 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
             "ffmpeg", "-y",
             "-hwaccel", "cuda",
             "-i", str(temp_output_path),
-            "-c:v", "h264_nvenc",   # GPU accelerated encoder
+            "-c:v", "libx264",   # GPU accelerated encoder
             "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",

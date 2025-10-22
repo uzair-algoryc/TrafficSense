@@ -432,18 +432,35 @@ class SpeedDetectionProcessor:
         # Create temporary file for web-compatible output
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
+        # cmd = [
+        #     "ffmpeg", "-y",
+        #     "-i", str(output_path),
+        #     "-vcodec", "libx264",
+        #     "-acodec", "aac",
+        #     "-movflags", "faststart",
+        #     "-pix_fmt", "yuv420p",
+        #     temp_web_output
+        # ]
+        
         cmd = [
             "ffmpeg", "-y",
+            "-hwaccel", "cuda",
             "-i", str(output_path),
-            "-vcodec", "libx264",
-            "-acodec", "aac",
-            "-movflags", "faststart",
+            "-c:v", "libx264",   # GPU accelerated encoder
+            "-preset", "ultrafast",
             "-pix_fmt", "yuv420p",
+            "-movflags", "faststart",
             temp_web_output
         ]
+        ffmpeg_start_time = time.time()
         
+        # result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         
+        ffmpeg_end_time = time.time()
+        ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
+        
+        logger.info(f"FFmpeg re-encoding took: {ffmpeg_duration:.2f} seconds")
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed for speed estimation video: {result.stderr.decode()}")
             # Keep original file if ffmpeg fails
