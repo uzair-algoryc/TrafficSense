@@ -949,7 +949,7 @@ def process_speed_estimation_video(
     width: float,
     height: float,
     max_speed: float,
-    conf: float = 0.5
+    conf: float = 0.35
 ) -> dict:
     """
     Process video with speed estimation using SpeedDetectionProcessor.
