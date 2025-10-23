@@ -1325,7 +1325,7 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
 
                         cv2.rectangle(frame, (abs_x1, abs_y1), (abs_x2, abs_y2), (0, 0, 255), 2)
                         cv2.putText(frame, text, (abs_x1, abs_y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
+                                    cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 6)
 
             out.write(frame)
 
