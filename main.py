@@ -1324,8 +1324,22 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
                         abs_y2 = y1 + int(py2)
 
                         cv2.rectangle(frame, (abs_x1, abs_y1), (abs_x2, abs_y2), (0, 0, 255), 2)
-                        cv2.putText(frame, text, (abs_x1, abs_y1 - 10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 6)
+
+                        # Get text size for background rectangle
+                        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 3, 6)[0]
+                        text_x = abs_x1
+                        text_y = abs_y1 - 10
+
+                        # Draw white background rectangle
+                        cv2.rectangle(frame, 
+                                    (text_x, text_y - text_size[1] - 5), 
+                                    (text_x + text_size[0] + 5, text_y + 5), 
+                                    (255, 255, 255),  # White background
+                                    -1)  # Filled rectangle
+
+                        # Draw text in black
+                        cv2.putText(frame, text, (text_x, text_y),
+                                cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 0), 6)  # Black text
 
             out.write(frame)
 
