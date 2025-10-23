@@ -396,7 +396,8 @@ def count_vehicles(
 #                                 detections.tracker_id[i] is not None):
 #                                 x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
 #                                 y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
-#                                 counter.update(detections.tracker_id[i], x_center, y_center)
+#                                 class_id = detections.class_id[i] if (detections.class_id is not None and i < len(detections.class_id)) else None
+                               # counter.update(detections.tracker_id[i], x_center, y_center, class_id)
                         
 #                         # Draw boxes
 #                         for i in range(len(detections.xyxy)):
@@ -492,20 +493,65 @@ def process_hybrid_count_video(
             total_frames=video_info.total_frames
         )
         
+        # Helper function to draw text with background
+        def draw_text_with_background(frame, text, position, font_scale, text_color, thickness, bg_color=(40, 40, 40), padding=10):
+            """Draw text with semi-transparent background for better visibility"""
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+            
+            x, y = position
+            # Draw background rectangle
+            overlay = frame.copy()
+            cv2.rectangle(overlay, 
+                         (x - padding, y - text_height - padding),
+                         (x + text_width + padding, y + baseline + padding),
+                         bg_color, -1)
+            # Blend the overlay with original frame (0.7 = 70% opacity)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+            
+            # Draw text on top
+            cv2.putText(frame, text, position, font, font_scale, text_color, thickness)
+        
+        # Helper function to draw class counts on frame
+        def draw_class_counts(frame, counter):
+            """Draw class-specific counts on frame (only if count > 0)"""
+            y_offset = 180  # Start below the IN/OUT counts
+            class_names = {
+                2: "Cars",
+                3: "Motorcycles", 
+                5: "Buses",
+                7: "Trucks"
+            }
+            class_colors = {
+                2: (0, 255, 255),    # Yellow for Cars
+                3: (0, 255, 0),      # Green for Motorcycles
+                5: (255, 165, 0),    # Orange for Buses
+                7: (255, 0, 255)     # Magenta for Trucks
+            }
+            
+            for class_id, count in counter.class_counts.items():
+                if count > 0:  # Only display if count > 0
+                    class_name = class_names.get(class_id, "Unknown")
+                    color = class_colors.get(class_id, (128, 128, 128))
+                    draw_text_with_background(frame, f"{class_name}: {count}", (60, y_offset), 
+                                            1.0, color, 2)
+                    y_offset += 50  # Move down for next class
+        
         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
             for frame in frame_gen:
                 try:
                     # model_results = model(frame, verbose=False, conf=0.5, device=device)
-                    model_results = model(frame, verbose=False, conf=0.5, device=DEVICE)
-
+                    model_results = model(frame, verbose=False, conf=0.65, device=DEVICE)
                     
                     if model_results is None or len(model_results) == 0:
                         logger.warning("Model returned no results for frame, skipping...")
                         cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                        draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
+                                                 1.2, (0, 255, 0), 3)
+                        draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
+                                                 1.2, (0, 0, 255), 3)
+                        # NEW: Draw class counts
+                        draw_class_counts(frame, counter)
                         sink.write_frame(frame)
                         continue
                     
@@ -515,10 +561,12 @@ def process_hybrid_count_video(
                     if detections is None or len(detections) == 0:
                         logger.debug("No detections found in frame")
                         cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-                        cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                        cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                   cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                        draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
+                                                 1.2, (0, 255, 0), 3)
+                        draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
+                                                 1.2, (0, 0, 255), 3)
+                        # NEW: Draw class counts
+                        draw_class_counts(frame, counter)
                         sink.write_frame(frame)
                         continue
                     
@@ -528,10 +576,12 @@ def process_hybrid_count_video(
                 except Exception as e:
                     logger.error(f"Error processing frame: {str(e)}")
                     cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
-                    cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                    cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                    draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
+                                             1.2, (0, 255, 0), 3)
+                    draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
+                                             1.2, (0, 0, 255), 3)
+                    # NEW: Draw class counts
+                    draw_class_counts(frame, counter)
                     sink.write_frame(frame)
                     continue
                 
@@ -543,7 +593,9 @@ def process_hybrid_count_video(
                         detections.tracker_id[i] is not None):
                         x_center = (detections.xyxy[i][0] + detections.xyxy[i][2]) / 2
                         y_center = (detections.xyxy[i][1] + detections.xyxy[i][3]) / 2
-                        counter.update(detections.tracker_id[i], x_center, y_center)
+                        # NEW: Get class_id for this detection
+                        class_id = detections.class_id[i] if (detections.class_id is not None and i < len(detections.class_id)) else None
+                        counter.update(detections.tracker_id[i], x_center, y_center, class_id)
                 
                 # Draw trajectory trails for active vehicles (magenta trails)
                 # for track_id, trajectory in counter.vehicle_trajectories.items():
@@ -597,11 +649,14 @@ def process_hybrid_count_video(
                 # Draw counting line (yellow, thicker)
                 cv2.line(frame, start_point, end_point, (0, 200, 255), 5)
                 
-                # Display counts
-                cv2.putText(frame, f"IN: {counter.in_count}", (60, 60), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
-                cv2.putText(frame, f"OUT: {counter.out_count}", (60, 120), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+                # Display counts with background
+                draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
+                                         1.2, (0, 255, 0), 3)
+                draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
+                                         1.2, (0, 0, 255), 3)
+                
+                # NEW: Draw class counts
+                draw_class_counts(frame, counter)
                 
                 sink.write_frame(frame)
         
@@ -631,12 +686,10 @@ def process_hybrid_count_video(
             temp_web_output
         ]
         ffmpeg_start_time = time.time()
-
         
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         ffmpeg_end_time = time.time()
         ffmpeg_duration = ffmpeg_end_time - ffmpeg_start_time
-
         logger.info(f"FFmpeg re-encoding took: {ffmpeg_duration:.2f} seconds")
         if result.returncode != 0:
             logger.error(f"FFmpeg encoding failed: {result.stderr.decode()}")
@@ -1326,20 +1379,17 @@ def process_alpr_video(video_bytes: bytes) -> bytes:
                         cv2.rectangle(frame, (abs_x1, abs_y1), (abs_x2, abs_y2), (0, 0, 255), 2)
 
                         # Get text size for background rectangle
-                        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 3, 6)[0]
+                        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
                         text_x = abs_x1
-                        text_y = abs_y1 - 10
+                        text_y = abs_y1 - 8
 
-                        # Draw black background rectangle
                         cv2.rectangle(frame, 
-                                    (text_x, text_y - text_size[1] - 5), 
-                                    (text_x + text_size[0] + 5, text_y + 5), 
-                                    (0, 0, 0),  # Black background
-                                    -1)  # Filled rectangle
+                                (text_x, text_y - text_size[1] - 3), 
+                                (text_x + text_size[0] + 3, text_y + 3), 
+                                (0, 0, 0), -1)
 
-                        # Draw text in white
                         cv2.putText(frame, text, (text_x, text_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 3, (255, 255, 255), 6)  # White text
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
             out.write(frame)
 

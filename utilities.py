@@ -410,6 +410,10 @@ class HybridVehicleCounter:
         self.B = -self.line_vec[0]  # -dx
         self.C = self.line_vec[0] * self.start[1] - self.line_vec[1] * self.start[0]
         
+        # Vehicle class tracking
+        self.vehicle_classes = {}  # track_id -> class_id
+        self.class_counts = {2: 0, 3: 0, 5: 0, 7: 0}  # Initialize counts for car, motorcycle, bus, truck
+        
         # Trajectory parameters
         self.trajectory_buffer_size = 15  # 0.5 seconds at 30 FPS
         self.min_points_for_counting = 3  # Minimum trajectory length
@@ -419,11 +423,20 @@ class HybridVehicleCounter:
         self.vehicle_trajectories = {}  # track_id -> list of (x, y) points
         self.vehicle_last_side = {}  # track_id -> side of line (1 or -1)
         self.counted_vehicles = set()  # PERMANENT - never count twice
+        self.vehicle_classes = {}  # track_id -> class_id (NEW)
         
         # Counters
         self.in_count = 0
         self.out_count = 0
         self.mode = mode.lower()
+        
+        # NEW: Class-specific counters
+        self.class_counts = {
+            2: 0,  # Car
+            3: 0,  # Motorcycle
+            5: 0,  # Bus
+            7: 0   # Truck
+        }
     
     def _get_line_side(self, point):
         """Get which side of line the point is on using line equation"""
@@ -518,7 +531,7 @@ class HybridVehicleCounter:
         
         return None
     
-    def update(self, tracker_id: int, x_center: float, y_center: float):
+    def update(self, tracker_id: int, x_center: float, y_center: float, class_id: int = None):
         """Update vehicle trajectory and check for line crossing"""
         if tracker_id is None:
             return
@@ -533,6 +546,9 @@ class HybridVehicleCounter:
         if tracker_id not in self.vehicle_trajectories:
             self.vehicle_trajectories[tracker_id] = [current_point]
             self.vehicle_last_side[tracker_id] = self._get_line_side(current_point)
+            # NEW: Store class_id for this vehicle
+            if class_id is not None:
+                self.vehicle_classes[tracker_id] = class_id
             return
         
         # Add current point to trajectory
@@ -557,9 +573,20 @@ class HybridVehicleCounter:
                 if direction == "in" and self.mode in ["both", "in"]:
                     self.in_count += 1
                     self.counted_vehicles.add(tracker_id)
+                    # NEW: Increment class counter
+                    if tracker_id in self.vehicle_classes:
+                        vehicle_class = self.vehicle_classes[tracker_id]
+                        if vehicle_class in self.class_counts:
+                            self.class_counts[vehicle_class] += 1
+                            
                 elif direction == "out" and self.mode in ["both", "out"]:
                     self.out_count += 1
                     self.counted_vehicles.add(tracker_id)
+                    # NEW: Increment class counter
+                    if tracker_id in self.vehicle_classes:
+                        vehicle_class = self.vehicle_classes[tracker_id]
+                        if vehicle_class in self.class_counts:
+                            self.class_counts[vehicle_class] += 1
                 
                 # Update last side
                 self.vehicle_last_side[tracker_id] = curr_side
@@ -576,5 +603,8 @@ class HybridVehicleCounter:
         self.vehicle_trajectories = {}
         self.vehicle_last_side = {}
         self.counted_vehicles = set()
+        self.vehicle_classes = {}  # NEW
         self.in_count = 0
         self.out_count = 0
+        # NEW: Reset class counters
+        self.class_counts = {2: 0, 3: 0, 5: 0, 7: 0}
