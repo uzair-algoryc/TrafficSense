@@ -541,7 +541,7 @@ def process_hybrid_count_video(
             for frame in frame_gen:
                 try:
                     # model_results = model(frame, verbose=False, conf=0.5, device=device)
-                    model_results = model(frame, verbose=False, conf=0.65, device=DEVICE)
+                    model_results = model(frame, verbose=False, conf=0.5, device=DEVICE)
                     
                     if model_results is None or len(model_results) == 0:
                         logger.warning("Model returned no results for frame, skipping...")

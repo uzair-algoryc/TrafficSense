@@ -410,8 +410,9 @@ class HybridVehicleCounter:
         self.B = -self.line_vec[0]  # -dx
         self.C = self.line_vec[0] * self.start[1] - self.line_vec[1] * self.start[0]
         
-        # Vehicle class tracking
-        self.vehicle_classes = {}  # track_id -> class_id
+        # Vehicle class tracking with majority voting
+        self.vehicle_classes = {}  # track_id -> final_class_id
+        self.vehicle_class_history = {}  # track_id -> list of class_ids for majority voting
         self.class_counts = {2: 0, 3: 0, 5: 0, 7: 0}  # Initialize counts for car, motorcycle, bus, truck
         
         # Trajectory parameters
@@ -423,7 +424,7 @@ class HybridVehicleCounter:
         self.vehicle_trajectories = {}  # track_id -> list of (x, y) points
         self.vehicle_last_side = {}  # track_id -> side of line (1 or -1)
         self.counted_vehicles = set()  # PERMANENT - never count twice
-        self.vehicle_classes = {}  # track_id -> class_id (NEW)
+        # Note: vehicle_classes already defined above with majority voting support
         
         # Counters
         self.in_count = 0
@@ -531,6 +532,56 @@ class HybridVehicleCounter:
         
         return None
     
+    def _update_vehicle_class(self, tracker_id: int, class_id: int):
+        """
+        Update vehicle class using majority voting system for robust classification.
+        
+        Args:
+            tracker_id: Vehicle tracking ID
+            class_id: Current frame's detected class ID
+        """
+        if class_id is None:
+            return
+        
+        # Initialize class history if not exists
+        if tracker_id not in self.vehicle_class_history:
+            self.vehicle_class_history[tracker_id] = []
+        
+        # Add current class detection to history
+        self.vehicle_class_history[tracker_id].append(class_id)
+        
+        # Keep only last 10 detections for efficiency and recent accuracy
+        if len(self.vehicle_class_history[tracker_id]) > 10:
+            self.vehicle_class_history[tracker_id].pop(0)
+        
+        # Determine most frequent class (majority vote)
+        class_history = self.vehicle_class_history[tracker_id]
+        if len(class_history) >= 3:  # Need at least 3 detections for reliable voting
+            # Count occurrences of each class
+            class_counts = {}
+            for cls in class_history:
+                class_counts[cls] = class_counts.get(cls, 0) + 1
+            
+            # Get the most frequent class
+            most_frequent_class = max(class_counts, key=class_counts.get)
+            
+            # Update final class assignment
+            old_class = self.vehicle_classes.get(tracker_id, None)
+            if old_class != most_frequent_class:
+                # Class changed - log for debugging
+                class_names = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
+                old_name = class_names.get(old_class, f"Class{old_class}") if old_class else "None"
+                new_name = class_names.get(most_frequent_class, f"Class{most_frequent_class}")
+                print(f"🔄 Vehicle {tracker_id}: Class updated from {old_name} to {new_name} (votes: {class_counts})")
+            
+            self.vehicle_classes[tracker_id] = most_frequent_class
+        elif len(class_history) == 1:
+            # For first detection, use it as initial assignment
+            self.vehicle_classes[tracker_id] = class_history[0]
+            class_names = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
+            class_name = class_names.get(class_history[0], f"Class{class_history[0]}")
+            print(f"🆕 Vehicle {tracker_id}: Initial class assignment = {class_name}")
+    
     def update(self, tracker_id: int, x_center: float, y_center: float, class_id: int = None):
         """Update vehicle trajectory and check for line crossing"""
         if tracker_id is None:
@@ -546,10 +597,13 @@ class HybridVehicleCounter:
         if tracker_id not in self.vehicle_trajectories:
             self.vehicle_trajectories[tracker_id] = [current_point]
             self.vehicle_last_side[tracker_id] = self._get_line_side(current_point)
-            # NEW: Store class_id for this vehicle
-            if class_id is not None:
-                self.vehicle_classes[tracker_id] = class_id
+            # Initialize class history for new vehicle
+            if tracker_id not in self.vehicle_class_history:
+                self.vehicle_class_history[tracker_id] = []
             return
+        
+        # Update vehicle class using majority voting system
+        self._update_vehicle_class(tracker_id, class_id)
         
         # Add current point to trajectory
         trajectory = self.vehicle_trajectories[tracker_id]
@@ -573,20 +627,26 @@ class HybridVehicleCounter:
                 if direction == "in" and self.mode in ["both", "in"]:
                     self.in_count += 1
                     self.counted_vehicles.add(tracker_id)
-                    # NEW: Increment class counter
+                    # Increment class counter with logging
                     if tracker_id in self.vehicle_classes:
                         vehicle_class = self.vehicle_classes[tracker_id]
                         if vehicle_class in self.class_counts:
                             self.class_counts[vehicle_class] += 1
+                            class_names = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
+                            class_name = class_names.get(vehicle_class, f"Class{vehicle_class}")
+                            print(f"✅ COUNTED IN: Vehicle {tracker_id} as {class_name} | Total {class_name}s: {self.class_counts[vehicle_class]}")
                             
                 elif direction == "out" and self.mode in ["both", "out"]:
                     self.out_count += 1
                     self.counted_vehicles.add(tracker_id)
-                    # NEW: Increment class counter
+                    # Increment class counter with logging
                     if tracker_id in self.vehicle_classes:
                         vehicle_class = self.vehicle_classes[tracker_id]
                         if vehicle_class in self.class_counts:
                             self.class_counts[vehicle_class] += 1
+                            class_names = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
+                            class_name = class_names.get(vehicle_class, f"Class{vehicle_class}")
+                            print(f"✅ COUNTED OUT: Vehicle {tracker_id} as {class_name} | Total {class_name}s: {self.class_counts[vehicle_class]}")
                 
                 # Update last side
                 self.vehicle_last_side[tracker_id] = curr_side
@@ -603,8 +663,9 @@ class HybridVehicleCounter:
         self.vehicle_trajectories = {}
         self.vehicle_last_side = {}
         self.counted_vehicles = set()
-        self.vehicle_classes = {}  # NEW
+        self.vehicle_classes = {}
+        self.vehicle_class_history = {}  # Reset class history
         self.in_count = 0
         self.out_count = 0
-        # NEW: Reset class counters
+        # Reset class counters
         self.class_counts = {2: 0, 3: 0, 5: 0, 7: 0}
