@@ -668,27 +668,27 @@ def process_hybrid_count_video(
         logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(output_path),
-            "-vcodec", "libx264",
-            "-preset", "ultrafast",  # Much faster than default
-            "-crf", "23",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "faststart",
-            temp_web_output
-        ]
         # cmd = [
         #     "ffmpeg", "-y",
-        #     "-hwaccel", "cuda",
         #     "-i", str(output_path),
-        #     "-c:v", "libx264",   # GPU accelerated encoder
-        #     "-preset", "ultrafast",
+        #     "-vcodec", "libx264",
+        #     "-preset", "ultrafast",  # Much faster than default
+        #     "-crf", "23",
         #     "-pix_fmt", "yuv420p",
         #     "-movflags", "faststart",
-        #     "-c:a", "aac",
         #     temp_web_output
         # ]
+        cmd = [
+            "ffmpeg", "-y",
+            "-hwaccel", "cuda",
+            "-i", str(output_path),
+            "-c:v", "libx264",   # GPU accelerated encoder
+            "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "faststart",
+            "-c:a", "aac",
+            temp_web_output
+        ]
         ffmpeg_start_time = time.time()
         
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
