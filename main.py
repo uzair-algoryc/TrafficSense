@@ -494,7 +494,7 @@ def process_hybrid_count_video(
         )
         
         # Helper function to draw text with background
-        def draw_text_with_background(frame, text, position, font_scale, text_color, thickness, bg_color=(40, 40, 40), padding=10):
+        def draw_text_with_background(frame, text, position, font_scale, text_color, thickness, bg_color=(0, 0, 0), padding=10):
             """Draw text with semi-transparent background for better visibility"""
             font = cv2.FONT_HERSHEY_SIMPLEX
             (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
@@ -514,27 +514,31 @@ def process_hybrid_count_video(
         
         # Helper function to draw class counts on frame
         def draw_class_counts(frame, counter):
-            """Draw class-specific counts on frame (only if count > 0)"""
+            """Draw directional class-specific counts on frame (only if count > 0)"""
             y_offset = 180  # Start below the IN/OUT counts
             class_names = {
-                2: "Cars",
-                3: "Motorcycles", 
-                5: "Buses",
-                7: "Trucks"
+                2: "Car",
+                3: "Motorcycle", 
+                5: "Bus",
+                7: "Truck"
             }
             class_colors = {
-                2: (0, 255, 255),    # Yellow for Cars
-                3: (0, 255, 0),      # Green for Motorcycles
-                5: (255, 165, 0),    # Orange for Buses
-                7: (255, 0, 255)     # Magenta for Trucks
+                2: (255, 255, 255),    # White
+                3: (255, 255, 255),      # White
+                5: (25, 255, 255),    # White
+                7: (255, 255, 255)     # White
             }
             
-            for class_id, count in counter.class_counts.items():
-                if count > 0:  # Only display if count > 0
+            for class_id in [2, 3, 5, 7]:  # Check each class
+                in_count = counter.class_counts_in.get(class_id, 0)
+                out_count = counter.class_counts_out.get(class_id, 0)
+                
+                # Only display if either IN or OUT count > 0
+                if in_count > 0 or out_count > 0:
                     class_name = class_names.get(class_id, "Unknown")
                     color = class_colors.get(class_id, (128, 128, 128))
-                    draw_text_with_background(frame, f"{class_name}: {count}", (60, y_offset), 
-                                            1.0, color, 2)
+                    draw_text_with_background(frame, f"{class_name}_In: {in_count} | {class_name}_Out: {out_count}", 
+                                            (60, y_offset), 1.0, color, 2)
                     y_offset += 50  # Move down for next class
         
         with sv.VideoSink(output_path, video_info_mp4v, codec='mp4v') as sink:
@@ -547,9 +551,9 @@ def process_hybrid_count_video(
                         logger.warning("Model returned no results for frame, skipping...")
                         cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
                         draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
-                                                 1.2, (0, 255, 0), 3)
+                                                 1.2, (255, 255, 255), 3)
                         draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                                 1.2, (0, 0, 255), 3)
+                                                 1.2, (255, 255, 255), 3)
                         # NEW: Draw class counts
                         draw_class_counts(frame, counter)
                         sink.write_frame(frame)
@@ -562,9 +566,9 @@ def process_hybrid_count_video(
                         logger.debug("No detections found in frame")
                         cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
                         draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
-                                                 1.2, (0, 255, 0), 3)
+                                                 1.2, (255, 255, 255), 3)
                         draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                                 1.2, (0, 0, 255), 3)
+                                                 1.2, (255, 255, 255), 3)
                         # NEW: Draw class counts
                         draw_class_counts(frame, counter)
                         sink.write_frame(frame)
@@ -577,9 +581,9 @@ def process_hybrid_count_video(
                     logger.error(f"Error processing frame: {str(e)}")
                     cv2.line(frame, start_point, end_point, (0, 255, 255), 5)
                     draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
-                                             1.2, (0, 255, 0), 3)
+                                             1.2, (255, 255, 255), 3)
                     draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                             1.2, (0, 0, 255), 3)
+                                             1.2, (255, 255, 255), 3)
                     # NEW: Draw class counts
                     draw_class_counts(frame, counter)
                     sink.write_frame(frame)
@@ -651,9 +655,9 @@ def process_hybrid_count_video(
                 
                 # Display counts with background
                 draw_text_with_background(frame, f"IN: {counter.in_count}", (60, 60), 
-                                         1.2, (0, 255, 0), 3)
+                                         1.2, (255, 255, 255), 3)
                 draw_text_with_background(frame, f"OUT: {counter.out_count}", (60, 120), 
-                                         1.2, (0, 0, 255), 3)
+                                         1.2, (255, 255, 255), 3)
                 
                 # NEW: Draw class counts
                 draw_class_counts(frame, counter)
@@ -664,27 +668,27 @@ def process_hybrid_count_video(
         logger.info(f"Re-encoding video with ffmpeg for web compatibility: {output_path}")
         temp_web_output = str(output_path).replace(".mp4", "_web.mp4")
         
-        # cmd = [
-        #     "ffmpeg", "-y",
-        #     "-i", str(output_path),
-        #     "-vcodec", "libx264",
-        #     "-preset", "ultrafast",  # Much faster than default
-        #     "-crf", "23",
-        #     "-pix_fmt", "yuv420p",
-        #     "-movflags", "faststart",
-        #     temp_web_output
-        # ]
         cmd = [
             "ffmpeg", "-y",
-            "-hwaccel", "cuda",
             "-i", str(output_path),
-            "-c:v", "libx264",   # GPU accelerated encoder
-            "-preset", "ultrafast",
+            "-vcodec", "libx264",
+            "-preset", "ultrafast",  # Much faster than default
+            "-crf", "23",
             "-pix_fmt", "yuv420p",
             "-movflags", "faststart",
-            "-c:a", "aac",
             temp_web_output
         ]
+        # cmd = [
+        #     "ffmpeg", "-y",
+        #     "-hwaccel", "cuda",
+        #     "-i", str(output_path),
+        #     "-c:v", "libx264",   # GPU accelerated encoder
+        #     "-preset", "ultrafast",
+        #     "-pix_fmt", "yuv420p",
+        #     "-movflags", "faststart",
+        #     "-c:a", "aac",
+        #     temp_web_output
+        # ]
         ffmpeg_start_time = time.time()
         
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

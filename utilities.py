@@ -413,7 +413,6 @@ class HybridVehicleCounter:
         # Vehicle class tracking with majority voting
         self.vehicle_classes = {}  # track_id -> final_class_id
         self.vehicle_class_history = {}  # track_id -> list of class_ids for majority voting
-        self.class_counts = {2: 0, 3: 0, 5: 0, 7: 0}  # Initialize counts for car, motorcycle, bus, truck
         
         # Trajectory parameters
         self.trajectory_buffer_size = 15  # 0.5 seconds at 30 FPS
@@ -431,12 +430,18 @@ class HybridVehicleCounter:
         self.out_count = 0
         self.mode = mode.lower()
         
-        # NEW: Class-specific counters
-        self.class_counts = {
-            2: 0,  # Car
-            3: 0,  # Motorcycle
-            5: 0,  # Bus
-            7: 0   # Truck
+        # Class-specific directional counters
+        self.class_counts_in = {
+            2: 0,  # Car IN
+            3: 0,  # Motorcycle IN
+            5: 0,  # Bus IN
+            7: 0   # Truck IN
+        }
+        self.class_counts_out = {
+            2: 0,  # Car OUT
+            3: 0,  # Motorcycle OUT
+            5: 0,  # Bus OUT
+            7: 0   # Truck OUT
         }
     
     def _get_line_side(self, point):
@@ -627,26 +632,26 @@ class HybridVehicleCounter:
                 if direction == "in" and self.mode in ["both", "in"]:
                     self.in_count += 1
                     self.counted_vehicles.add(tracker_id)
-                    # Increment class counter with logging
+                    # Increment class IN counter with logging
                     if tracker_id in self.vehicle_classes:
                         vehicle_class = self.vehicle_classes[tracker_id]
-                        if vehicle_class in self.class_counts:
-                            self.class_counts[vehicle_class] += 1
+                        if vehicle_class in self.class_counts_in:
+                            self.class_counts_in[vehicle_class] += 1
                             class_names = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
                             class_name = class_names.get(vehicle_class, f"Class{vehicle_class}")
-                            print(f"✅ COUNTED IN: Vehicle {tracker_id} as {class_name} | Total {class_name}s: {self.class_counts[vehicle_class]}")
+                            print(f"✅ COUNTED IN: Vehicle {tracker_id} as {class_name} | {class_name}_In: {self.class_counts_in[vehicle_class]}")
                             
                 elif direction == "out" and self.mode in ["both", "out"]:
                     self.out_count += 1
                     self.counted_vehicles.add(tracker_id)
-                    # Increment class counter with logging
+                    # Increment class OUT counter with logging
                     if tracker_id in self.vehicle_classes:
                         vehicle_class = self.vehicle_classes[tracker_id]
-                        if vehicle_class in self.class_counts:
-                            self.class_counts[vehicle_class] += 1
+                        if vehicle_class in self.class_counts_out:
+                            self.class_counts_out[vehicle_class] += 1
                             class_names = {2: "Car", 3: "Motorcycle", 5: "Bus", 7: "Truck"}
                             class_name = class_names.get(vehicle_class, f"Class{vehicle_class}")
-                            print(f"✅ COUNTED OUT: Vehicle {tracker_id} as {class_name} | Total {class_name}s: {self.class_counts[vehicle_class]}")
+                            print(f"✅ COUNTED OUT: Vehicle {tracker_id} as {class_name} | {class_name}_Out: {self.class_counts_out[vehicle_class]}")
                 
                 # Update last side
                 self.vehicle_last_side[tracker_id] = curr_side
@@ -667,5 +672,6 @@ class HybridVehicleCounter:
         self.vehicle_class_history = {}  # Reset class history
         self.in_count = 0
         self.out_count = 0
-        # Reset class counters
-        self.class_counts = {2: 0, 3: 0, 5: 0, 7: 0}
+        # Reset directional class counters
+        self.class_counts_in = {2: 0, 3: 0, 5: 0, 7: 0}
+        self.class_counts_out = {2: 0, 3: 0, 5: 0, 7: 0}
